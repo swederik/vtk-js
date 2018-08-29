@@ -1,11 +1,32 @@
 import macro from 'vtk.js/Sources/macro';
 import vtkActor from 'vtk.js/Sources/Rendering/Core/Actor';
 import vtkMapper from 'vtk.js/Sources/Rendering/Core/Mapper';
+import vtkPixelSpaceCallbackMapper from 'vtk.js/Sources/Rendering/Core/PixelSpaceCallbackMapper';
 import vtkMath from 'vtk.js/Sources/Common/Core/Math';
 import vtkPolyData from 'vtk.js/Sources/Common/DataModel/PolyData';
-// import vtkTubeFilter from 'vtk.js/Sources/Filters/General/TubeFilter';
+import vtkTubeFilter from 'vtk.js/Sources/Filters/General/TubeFilter';
 import vtkWidgetRepresentation from 'vtk.js/Sources/Widgets/Representations/WidgetRepresentation';
 
+import PropertyConst from 'vtk.js/Sources/Rendering/Core/Property/Constants';
+
+const { Interpolation } = PropertyConst;
+
+// ----------------------------------------------------------------------------
+// Representation style
+// ----------------------------------------------------------------------------
+
+// const STYLE_PIPELINE_NAMES = ['line', 'tube', 'display2D'];
+const STYLE_DEFAULT = {
+  active: {},
+  inactive: {},
+  static: {
+    line: {
+      color: [1, 1, 1],
+      opacity: 1,
+      interpolation: Interpolation.FLAT,
+    },
+  },
+};
 // ----------------------------------------------------------------------------
 // vtkPolyLineRepresentation methods
 // ----------------------------------------------------------------------------
@@ -46,20 +67,37 @@ function vtkPolyLineRepresentation(publicAPI, model) {
   // Generic rendering pipeline
   // --------------------------------------------------------------------------
 
-  model.mapper = vtkMapper.newInstance();
-  model.actor = vtkActor.newInstance();
-  // model.tubes = vtkTubeFilter.newInstance({
-  //   radius: 0.01,
-  //   numberOfSides: 12,
-  //   capping: false,
-  // });
+  model.pipelines = {};
+  model.pipelines.line = {
+    source: publicAPI,
+    mapper: vtkMapper.newInstance(),
+    actor: vtkActor.newInstance(),
+  };
+  model.pipelines.display2D = {
+    source: publicAPI,
+    mapper: vtkPixelSpaceCallbackMapper.newInstance(),
+    actor: vtkActor.newInstance({ pickable: false }),
+  };
+  model.pipelines.tube = {
+    source: vtkTubeFilter.newInstance({
+      radius: 0.01,
+      numberOfSides: 12,
+      capping: false,
+    }),
+    mapper: vtkMapper.newInstance(),
+    actor: vtkActor.newInstance(),
+  };
+  model.pipelines.tube.source.setInputConnection(publicAPI.getOutputPort());
 
-  // model.tubes.setInputConnection(publicAPI.getOutputPort());
-  // model.mapper.setInputConnection(model.tubes.getOutputPort());
-  model.mapper.setInputConnection(publicAPI.getOutputPort());
-  model.actor.setMapper(model.mapper);
+  vtkWidgetRepresentation.connectPipeline(model.pipelines.tube);
+  vtkWidgetRepresentation.connectPipeline(model.pipelines.line);
+  vtkWidgetRepresentation.connectPipeline(model.pipelines.display2D);
 
-  model.actors.push(model.actor);
+  model.actors.push(model.pipelines.display2D.actor);
+  model.actors.push(model.pipelines.line.actor);
+  model.actors.push(model.pipelines.tube.actor);
+
+  vtkWidgetRepresentation.applyStyles(model.pipelines, STYLE_DEFAULT);
 
   // --------------------------------------------------------------------------
 
@@ -92,6 +130,10 @@ function vtkPolyLineRepresentation(publicAPI, model) {
 
     model.internalPolyData.modified();
     outData[0] = model.internalPolyData;
+  };
+
+  publicAPI.setDisplayCallback = (callback) => {
+    model.pipelines.display2D.mapper.setCallback(callback);
   };
 }
 
