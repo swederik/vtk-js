@@ -20,7 +20,7 @@ function vtkSVGCrosshairsWidget(publicAPI, model) {
 
   publicAPI.render = (svgContainer, scale) => {
     const node = getWidgetNode(svgContainer, model.widgetId);
-    const { point, strokeColor, strokeWidth, padding } = model;
+    const { point, strokeColor, strokeWidth, strokeDashArray, padding } = model;
 
     // TODO: Get renderWindow dimensions
     const width = 1000;
@@ -41,9 +41,10 @@ function vtkSVGCrosshairsWidget(publicAPI, model) {
     x2="${point[0] * scale}"
     y2="${point[1] * scale - padding}"
     stroke="${strokeColor}"
+    stroke-dasharray="${strokeDashArray}"
     stroke-linecap="round"
     stroke-linejoin="round"
-    stroke-width="4"
+    stroke-width="${strokeWidth}"
   ></line>
   <!-- Right !-->
   <line
@@ -51,7 +52,7 @@ function vtkSVGCrosshairsWidget(publicAPI, model) {
     y1="${point[1] * scale}"
     x2="${point[0] * scale + padding}"
     y2="${point[1] * scale}"
-    stroke-dasharray="8.0,5.0"
+    stroke-dasharray="${strokeDashArray}"
     stroke="${strokeColor}"
     stroke-linecap="round"
     stroke-linejoin="round"
@@ -63,7 +64,7 @@ function vtkSVGCrosshairsWidget(publicAPI, model) {
     y1="${bottom[1] * scale}"
     x2="${point[0] * scale}"
     y2="${point[1] * scale + padding}"
-    stroke-dasharray="8.0,5.0"
+    stroke-dasharray="${strokeDashArray}"
     stroke="${strokeColor}"
     stroke-linecap="round"
     stroke-linejoin="round"
@@ -75,7 +76,7 @@ function vtkSVGCrosshairsWidget(publicAPI, model) {
     y1="${point[1] * scale}"
     x2="${point[0] * scale - padding}"
     y2="${point[1] * scale}"
-    stroke-dasharray="8.0,5.0"
+    stroke-dasharray="${strokeDashArray}"
     stroke="${strokeColor}"
     stroke-linecap="round"
     stroke-linejoin="round"
@@ -91,8 +92,9 @@ function vtkSVGCrosshairsWidget(publicAPI, model) {
 
 const DEFAULT_VALUES = {
   point: [20, 20],
-  strokeColor: 'red',
-  strokeWidth: 4,
+  strokeColor: '#00ff00',
+  strokeWidth: 1,
+  strokeDashArray: '',
   padding: 20,
 };
 
@@ -103,7 +105,11 @@ export function extend(publicAPI, model, initialValues = {}) {
 
   macro.obj(publicAPI, model);
   macro.get(publicAPI, model, ['widgetId']);
-  macro.setGet(publicAPI, model, ['strokeColor', 'strokeWidth']);
+  macro.setGet(publicAPI, model, [
+    'strokeColor',
+    'strokeWidth',
+    'strokeDashArray',
+  ]);
   macro.setGetArray(publicAPI, model, ['point', 'padding'], 2);
 
   vtkSVGCrosshairsWidget(publicAPI, model);
