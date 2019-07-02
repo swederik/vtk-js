@@ -21,6 +21,11 @@
 
 varying vec3 vertexVCVSOutput;
 
+// TODO: This is also declared in the zBufferTexture shader replacement
+// I'm just putting these here for testing
+uniform float vpWidth;
+uniform float vpHeight;
+
 // first declare the settings from the mapper
 // that impact the code paths in here
 
@@ -35,6 +40,9 @@ varying vec3 vertexVCVSOutput;
 
 // Define the blend mode to use
 #define vtkBlendMode //VTK::BlendMode
+
+// Possibly define vtkImageOutlineOn
+//VTK::ImageLabelOutlineOn
 
 // define vtkLightComplexity
 //VTK::LightComplexity
@@ -109,6 +117,7 @@ uniform sampler2D jtexture;
 // some 3D texture values
 uniform float sampleDistance;
 uniform vec3 vVCToIJK;
+uniform mat4 VCWCMatrix;
 
 // the heights defined below are the locations
 // for the up to four components of the tfuns
@@ -225,7 +234,7 @@ vec4 getTextureValue(vec3 ijk)
   float ni = (ijk.x + float(xz)) * tdims.x/xstride;
   float nj = (ijk.y + float(yz)) * tdims.y/ystride;
 
-  vec2 tpos = vec2(ni/texWidth, nj/texHeight);
+  vec2 tvVCToIJK= vec2(ni/texWidth, nj/texHeight);
 
   vec4 tmp = texture2D(texture1, tpos);
 
@@ -270,6 +279,78 @@ vec4 computeNormal(vec3 pos, float scalar, vec3 tstep)
     result.xyz /= result.w;
   }
   return result;
+}
+
+vec3 fragCoordToIndexSpace(vec4 fragCoord) {
+  vec4 ndc = vec4(
+    (fragCoord.x / vpWidth - 0.5) * 2.0,
+    (fragCoord.y / vpHeight - 0.5) * 2.0,
+    (fragCoord.z - 0.5) * 2.0,
+    1.0);
+
+  vec4 clip = VCWCMatrix * ndc;
+  vec3 vertex = (clip / clip.w).xyz;
+
+  return vertex * vVCToIJK;
+
+  // gl_FragCoord assumes a lower-left origin for window coordinates
+
+  // First, convert from lower-left origin fragCoord to
+  // top-left origin, which corresponds to the 'display'
+  // coords that VTK uses.
+  //
+  // TODO: handle 0.5 offset for pixel coords in gl_FragCoord
+  /*vec4 displayCoord = vec4(
+    fragCoord.x,
+    vpHeight - fragCoord.y,
+    fragCoord.z,
+    fragCoord.w
+  );
+
+  // Convert to normalized display coordinates (0 - 1.0)
+  vec4 normDisplayCoord = vec4(
+    displayCoord.x / vpWidth,
+    displayCoord.y / vpHeight,
+    displayCoord.z,
+    1.0
+  );
+
+  /*
+  // Normalized display to normalized viewport
+
+  // TODO: Not sure where viewport is used? Looks like it's
+  // used for VR?
+  vec4 viewport = vec4(0, 0, 1, 1);
+
+  vec2 scale = vec2(
+    viewport[2] - viewport[0],
+    viewport[3] - viewport[1]
+  );
+
+  vec4 normViewportCoord = vec4(
+    (normDisplayCoord.x - viewport[0]) / scale[0],
+    (normDisplayCoord.y - viewport[1]) / scale[1],
+    normDisplayCoord.z,
+    0
+  );*/
+
+  // Normalized Viewport to View
+  /*vec4 viewCoord = vec4(
+    normDisplayCoord.x * 2.0 - 1.0,
+    normDisplayCoord.y * 2.0 - 1.0,
+    normDisplayCoord.z * 2.0 - 1.0,
+    1.0
+  );
+
+  // Convert the view coordinates to world coordinates.
+  // The VCWCMatrix is provided by the VolumeMapper from the
+  // current camera settings.
+  vec4 worldCoord = viewCoord * VCWCMatrix;
+
+  // Finally, convert the world-space coordinates to texture
+  // IJK coordinates and return this value as a vec3.
+  vec3 posIS = worldCoord.xyz * vVCToIJK;
+  return posIS;*/
 }
 
 //=======================================================================
@@ -469,6 +550,68 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep)
 #endif
 #endif
 
+  #ifdef vtkImageLabelOutlineOn
+
+  vec3 centerPosIS = fragCoordToIndexSpace(gl_FragCoord);
+  vec4 centerValue = getTextureValue(centerPosIS);
+  bool pixelOnBorder = false;
+
+  // TODO: Use //VTK:ImageLabelOutlineThickness
+  int thickness = 3;
+  for (int i = -thickness; i <= thickness; ++i) {
+    for (int j = -thickness; j <= thickness; ++j) {
+      if (i == 0 || j == 0) {
+        continue;
+      }
+
+      vec4 neighborPixelCoord = vec4(gl_FragCoord.x + float(i),
+        gl_FragCoord.y + float(j),
+        gl_FragCoord.z, gl_FragCoord.w);
+
+      vec3 neighborPosIS = fragCoordToIndexSpace(neighborPixelCoord);
+      vec4 value = getTextureValue(neighborPosIS);
+
+      // If any of my neighbours are not the same value as I
+      // am, this means I am on the border of the segment.
+      // We can break the loops
+      if (any(notEqual(value, centerValue))) {
+        pixelOnBorder = true;
+        break;
+      }
+    }
+
+    if (pixelOnBorder == true) {
+      break;
+    }
+  }
+
+  // If I am on the border, I am displayed at full opacity
+  if (pixelOnBorder == true) {
+    tColor.a = 1.0;
+
+    // For testing
+    tColor.r = 0.0;
+    tColor.g = 0.0;
+    tColor.b = 1.0;
+  } else if (any(greaterThan(centerValue, vec4(0.)))) {
+    tColor.a = 0.5;
+
+    // For testing
+    tColor.r = 0.0;
+    tColor.g = 1.0;
+    tColor.b = 0.0;
+  } else {
+    // Otherwise, I am displayed at reduced opacity
+    tColor.a = 0.0;
+
+    // For testing
+    // tColor.r = 1.0;
+    // tColor.g = 0.0;
+    // tColor.b = 0.0;
+  }
+
+  #endif
+
   return tColor;
 }
 
@@ -606,7 +749,7 @@ void applyBlend(vec3 posIS, vec3 stepIS, vec3 tdims, float numSteps)
     // Now map through opacity and color
     gl_FragData[0] = getColorForValue(value, posIS, tstep);
   #endif
-  #if vtkBlendMode == 3 //AVERAGE_INTENSITY_BLEND
+  #if vtkBlendMode == 1 //AVERAGE_INTENSITY_BLEND
     vec4 averageIPScalarRangeMin = vec4 (
       //VTK::AverageIPScalarRangeMin,
       //VTK::AverageIPScalarRangeMin,

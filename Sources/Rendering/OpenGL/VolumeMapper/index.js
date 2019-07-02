@@ -19,6 +19,7 @@ import { InterpolationType } from 'vtk.js/Sources/Rendering/Core/VolumeProperty/
 
 import vtkVolumeVS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkVolumeVS.glsl';
 import vtkVolumeFS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkVolumeFS.glsl';
+import vtkCoordinate from 'vtk.js/Sources/Rendering/Core/Coordinate';
 
 const { vtkWarningMacro, vtkErrorMacro } = macro;
 
@@ -98,6 +99,15 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
       ).result;
     }
 
+    const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
+    if (vtkImageLabelOutline === true) {
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::ImageLabelOutlineOn',
+        '#define vtkImageLabelOutlineOn'
+      ).result;
+    }
+
     const numComp = model.scalarTexture.getComponents();
     FSSource = vtkShaderProgram.substitute(
       FSSource,
@@ -129,6 +139,8 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
       (ext[3] - ext[2]) * spc[1],
       (ext[5] - ext[4]) * spc[2]
     );
+    console.warn('vsize');
+    console.warn(vsize);
     const maxSamples =
       vec3.length(vsize) / model.renderable.getSampleDistance();
 
@@ -559,8 +571,57 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
       program.setUniformf(`vPlaneDistance${i}`, dist);
     }
 
+    // ---------------------------------------------
+    // TODO: For some reason this is not the same
+    // as the inverted keyMats.wcvc
+    //
+    // model.viewToWorld = mat4.create();
+    // mat4.invert(model.viewToWorld, keyMats.wcvc);
+    const size = publicAPI.getRenderTargetSize();
+    const aspect = size[0] / size[1];
+    const viewToWorld = ren
+      .getActiveCamera()
+      .getCompositeProjectionMatrix(aspect, -1.0, 1.0);
+
+    mat4.invert(viewToWorld, viewToWorld);
+    mat4.transpose(viewToWorld, viewToWorld);
+
+    program.setUniformMatrix('VCWCMatrix', viewToWorld);
+    // ---------------------------------------------
+
     mat4.invert(model.displayToView, keyMats.vcdc);
     program.setUniformMatrix('DCVCMatrix', model.displayToView);
+
+    // Example of using viewToWorld matrix to go from
+    // a view position to a world position
+    const x = 0.3;
+    const y = 0.4;
+    const z = 1.0;
+    const out = vec3.fromValues(x * size[0], y * size[1], z);
+    const scale = vec3.fromValues(size[0], size[1], 1.0);
+    vec3.divide(out, out, scale);
+    out[0] = out[0] * 2.0 - 1.0;
+    out[1] = out[1] * 2.0 - 1.0;
+    out[2] = out[2] * 2.0 - 1.0;
+
+    vec3.transformMat4(out, out, viewToWorld);
+    console.warn(out);
+
+    vec3.multiply(out, out, vctoijk);
+    console.warn(out);
+
+    // Example of using vtkCoordinate to go from
+    // a view position to a world position.
+    // Both approaches obtain the same result (or very similar?)
+    const renderer = model.openGLRenderer.getRenderable();
+    const dPos = vtkCoordinate.newInstance();
+    dPos.setCoordinateSystemToNormalizedDisplay();
+    dPos.setValue(x, y, z);
+    const worldPos = dPos.getComputedWorldValue(renderer);
+    console.warn(worldPos);
+
+    program.setUniformf('vpWidth', size[0]);
+    program.setUniformf('vpHeight', size[1]);
 
     // handle lighting values
     switch (model.lastLightComplexity) {
