@@ -1,6 +1,7 @@
 import macro from 'vtk.js/Sources/macro';
 import vtkViewNode from 'vtk.js/Sources/Rendering/SceneGraph/ViewNode';
 import * as vtkMath from 'vtk.js/Sources/Common/Core/Math';
+import vtkMultiVolumeMapper from 'vtk.js/Sources/Rendering/OpenGL/MultiVolumeMapper';
 
 const { vtkDebugMacro } = macro;
 
@@ -26,6 +27,12 @@ function vtkOpenGLRenderer(publicAPI, model) {
       }
       publicAPI.updateLights();
       publicAPI.prepareNodes();
+
+      // model.renderable.getVolumes()
+      const multiVolumeMapper = vtkMultiVolumeMapper.newInstance();
+      multiVolumeMapper.setVolumes(model.renderable.getVolumes());
+
+      publicAPI.addMissingNode(multiVolumeMapper);
       publicAPI.addMissingNode(model.renderable.getActiveCamera());
       publicAPI.addMissingNodes(model.renderable.getViewPropsWithNestedProps());
       publicAPI.removeUnusedNodes();
