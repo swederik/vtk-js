@@ -17,8 +17,8 @@ import {
 import { InterpolationType } from 'vtk.js/Sources/Rendering/Core/VolumeProperty/Constants';
 import { BlendMode } from 'vtk.js/Sources/Rendering/Core/VolumeMapper/Constants';
 
-import vtkMultiVolumeVS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkMultiVolumeVS.glsl';
-import vtkVolumeFS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkVolumeFS.glsl';
+import vtkVolumeVS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkVolumeVS.glsl';
+import vtkMultiVolumeFS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkMultiVolumeFS.glsl';
 
 const { vtkWarningMacro, vtkErrorMacro } = macro;
 
@@ -61,8 +61,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       model.colorTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
       model.opacityTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
 
-      model.openGLVolume = publicAPI.getFirstAncestorOfType('vtkOpenGLVolume');
-      const actor = model.openGLVolume.getRenderable();
+      // TODO[multivolume]: I don't quite understand this part, so maybe
+      // we should be getting volumes from somewhere else?
+      //
+      // model.openGLVolume = publicAPI.getFirstAncestorOfType('vtkOpenGLVolume');
+      // const actor = model.openGLVolume.getRenderable();
+
+      const actors = model.getVolumes();
       model.openGLRenderer = publicAPI.getFirstAncestorOfType(
         'vtkOpenGLRenderer'
       );
@@ -70,7 +75,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       model.openGLCamera = model.openGLRenderer.getViewNodeFor(
         ren.getActiveCamera()
       );
-      publicAPI.renderPiece(ren, actor);
+      publicAPI.renderPiece(ren, actors);
     }
   };
 
@@ -80,94 +85,125 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.getShaderTemplate = (shaders, ren, actor) => {
-    shaders.Vertex = vtkMultiVolumeVS;
-    shaders.Fragment = vtkVolumeFS;
+    shaders.Vertex = vtkVolumeVS;
+    shaders.Fragment = vtkMultiVolumeFS;
     shaders.Geometry = '';
   };
 
-  publicAPI.replaceShaderValues = (shaders, ren, actor) => {
+  publicAPI.replaceShaderValues = (shaders, ren) => {
     let FSSource = shaders.Fragment;
 
-    // define some values in the shader
-    const iType = actor.getProperty().getInterpolationType();
-    if (iType === InterpolationType.LINEAR) {
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::TrilinearOn',
-        '#define vtkTrilinearOn'
-      ).result;
-    }
+    const numVolumes = model.volumes.length;
 
-    const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
-    if (vtkImageLabelOutline === true) {
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::ImageLabelOutlineOn',
-        '#define vtkImageLabelOutlineOn'
-      ).result;
-    }
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      const actor = model.volumes[volIdx];
 
-    const numComp = model.scalarTexture.getComponents();
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::NumComponents',
-      `#define vtkNumComponents ${numComp}`
-    ).result;
-
-    const iComps = actor.getProperty().getIndependentComponents();
-    if (iComps) {
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::IndependentComponentsOn',
-        '#define vtkIndependentComponentsOn'
-      ).result;
-    }
-
-    // WebGL only supports loops over constants
-    // and does not support while loops so we
-    // have to hard code how many steps/samples to take
-    // We do a break so most systems will gracefully
-    // early terminate, but it is always possible
-    // a system will execute every step regardless
-    const ext = model.currentInput.getExtent();
-    const spc = model.currentInput.getSpacing();
-    const vsize = vec3.create();
-    vec3.set(
-      vsize,
-      (ext[1] - ext[0]) * spc[0],
-      (ext[3] - ext[2]) * spc[1],
-      (ext[5] - ext[4]) * spc[2]
-    );
-
-    const maxSamples =
-      vec3.length(vsize) / model.renderable.getSampleDistance();
-
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::MaximumSamplesValue',
-      `${Math.ceil(maxSamples)}`
-    ).result;
-
-    // set light complexity
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::LightComplexity',
-      `#define vtkLightComplexity ${model.lastLightComplexity}`
-    ).result;
-
-    // if using gradient opacity define that
-    model.gopacity = actor.getProperty().getUseGradientOpacity(0);
-    for (let nc = 1; iComps && !model.gopacity && nc < numComp; ++nc) {
-      if (actor.getProperty().getUseGradientOpacity(nc)) {
-        model.gopacity = true;
+      // define some values in the shader
+      const iType = actor.getProperty().getInterpolationType();
+      if (iType === InterpolationType.LINEAR) {
+        FSSource = vtkShaderProgram.substitute(
+          FSSource,
+          '//VTK::TrilinearOn',
+          '#define vtkTrilinearOn'
+        ).result;
       }
-    }
-    if (model.gopacity) {
+
+      const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
+      if (vtkImageLabelOutline === true) {
+        FSSource = vtkShaderProgram.substitute(
+          FSSource,
+          '//VTK::ImageLabelOutlineOn',
+          '#define vtkImageLabelOutlineOn'
+        ).result;
+      }
+
+      const numComp = model.scalarTexture.getComponents();
       FSSource = vtkShaderProgram.substitute(
         FSSource,
-        '//VTK::GradientOpacityOn',
-        '#define vtkGradientOpacityOn'
+        '//VTK::NumComponents',
+        `#define vtkNumComponents ${numComp}`
       ).result;
+
+      const iComps = actor.getProperty().getIndependentComponents();
+      if (iComps) {
+        FSSource = vtkShaderProgram.substitute(
+          FSSource,
+          '//VTK::IndependentComponentsOn',
+          '#define vtkIndependentComponentsOn'
+        ).result;
+      }
+
+      // WebGL only supports loops over constants
+      // and does not support while loops so we
+      // have to hard code how many steps/samples to take
+      // We do a break so most systems will gracefully
+      // early terminate, but it is always possible
+      // a system will execute every step regardless
+
+      const ext = model.currentInput.getExtent();
+      const spc = model.currentInput.getSpacing();
+      const vsize = vec3.create();
+      vec3.set(
+        vsize,
+        (ext[1] - ext[0]) * spc[0],
+        (ext[3] - ext[2]) * spc[1],
+        (ext[5] - ext[4]) * spc[2]
+      );
+
+      const maxSamples =
+        vec3.length(vsize) / model.renderable.getSampleDistance();
+
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::MaximumSamplesValue',
+        `${Math.ceil(maxSamples)}`
+      ).result;
+
+      // set light complexity
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::LightComplexity',
+        `#define vtkLightComplexity ${model.lastLightComplexity}`
+      ).result;
+
+      // if using gradient opacity define that
+      model.gopacity = actor.getProperty().getUseGradientOpacity(0);
+      for (let nc = 1; iComps && !model.gopacity && nc < numComp; ++nc) {
+        if (actor.getProperty().getUseGradientOpacity(nc)) {
+          model.gopacity = true;
+        }
+      }
+      if (model.gopacity) {
+        FSSource = vtkShaderProgram.substitute(
+          FSSource,
+          '//VTK::GradientOpacityOn',
+          '#define vtkGradientOpacityOn'
+        ).result;
+      }
+
+      // Set the BlendMode approach
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::BlendMode',
+        `${model.renderable.getBlendMode()}`
+      ).result;
+
+      const averageIPScalarRange = model.renderable.getAverageIPScalarRange();
+
+      // TODO: Adding the .0 at the end feels hacky
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::AverageIPScalarRangeMin',
+        `${averageIPScalarRange[0]}.0`
+      ).result;
+
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::AverageIPScalarRangeMax',
+        `${averageIPScalarRange[1]}.0`
+      ).result;
+
+      shaders.Fragment = FSSource;
     }
 
     // if we have a ztexture then declare it and use it
@@ -187,34 +223,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ]).result;
     }
 
-    // Set the BlendMode approach
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::BlendMode',
-      `${model.renderable.getBlendMode()}`
-    ).result;
-
-    const averageIPScalarRange = model.renderable.getAverageIPScalarRange();
-
-    // TODO: Adding the .0 at the end feels hacky
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::AverageIPScalarRangeMin',
-      `${averageIPScalarRange[0]}.0`
-    ).result;
-
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::AverageIPScalarRangeMax',
-      `${averageIPScalarRange[1]}.0`
-    ).result;
-
-    shaders.Fragment = FSSource;
-
-    publicAPI.replaceShaderLight(shaders, ren, actor);
+    // TODO[multivolume]: Are light directions impacted by combination of volumes?
+    publicAPI.replaceShaderLight(shaders, ren);
   };
 
-  publicAPI.replaceShaderLight = (shaders, ren, actor) => {
+  publicAPI.replaceShaderLight = (shaders, ren) => {
     let FSSource = shaders.Fragment;
 
     // check for shadow maps
@@ -438,6 +451,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     // we will only render those fragments.
     const pos = vec3.create();
     const dir = vec3.create();
+
+    // TODO[multivolume]: Update input to vertex shader to compute dcxmin
+    // dcxmax, dcymin,dcymax from the combination of volumes
     let dcxmin = 1.0;
     let dcxmax = -1.0;
     let dcymin = 1.0;
@@ -497,7 +513,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     vec3.transformMat4(pos, pos, model.modelToView);
     program.setUniform3f('vOriginVC', pos[0], pos[1], pos[2]);
 
-    // apply the image directions
+    // apply the volume directions
     const i2wmat4 = model.currentInput.getIndexToWorld();
     mat4.multiply(model.idxToView, model.modelToView, i2wmat4);
 
@@ -581,8 +597,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniformf(`vPlaneDistance${i}`, dist);
 
       if (actor.getProperty().getUseLabelOutline()) {
-        const image = model.currentInput;
-        const worldToIndex = image.getWorldToIndex();
+        const volume = model.currentInput;
+        const worldToIndex = volume.getWorldToIndex();
 
         program.setUniformMatrix('vWCtoIDX', worldToIndex);
 
@@ -656,108 +672,157 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const volInfo = model.scalarTexture.getVolumeInfo();
     const vprop = actor.getProperty();
 
-    // set the component mix when independent
-    const numComp = model.scalarTexture.getComponents();
-    const iComps = actor.getProperty().getIndependentComponents();
-    if (iComps && numComp >= 2) {
-      let totalComp = 0.0;
-      for (let i = 0; i < numComp; ++i) {
-        totalComp += actor.getProperty().getComponentWeight(i);
-      }
-      for (let i = 0; i < numComp; ++i) {
-        program.setUniformf(
-          `mix${i}`,
-          actor.getProperty().getComponentWeight(i) / totalComp
-        );
-      }
-    }
+    const flatPerComp = (obj, volIdx, comp) =>
+      obj[volIdx].map((perComp) => perComp[comp]);
 
-    // three levels of shift scale combined into one
-    // for performance in the fragment shader
-    for (let i = 0; i < numComp; ++i) {
-      const target = iComps ? i : 0;
-      const sscale = volInfo.scale[i];
-      const ofun = vprop.getScalarOpacity(target);
-      const oRange = ofun.getRange();
-      const oscale = sscale / (oRange[1] - oRange[0]);
-      const oshift = (volInfo.offset[i] - oRange[0]) / (oRange[1] - oRange[0]);
-      program.setUniformf(`oshift${i}`, oshift);
-      program.setUniformf(`oscale${i}`, oscale);
+    const oscalePerVolume = [];
+    const oshiftPerVolume = [];
+    const cshiftPerVolume = [];
+    const cscalePerVolume = [];
 
-      const cfun = vprop.getRGBTransferFunction(target);
-      const cRange = cfun.getRange();
-      program.setUniformf(
-        `cshift${i}`,
-        (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0])
-      );
-      program.setUniformf(`cscale${i}`, sscale / (cRange[1] - cRange[0]));
-    }
+    const numVolumes = model.volumes.length;
 
-    if (model.gopacity) {
-      if (iComps) {
-        for (let nc = 0; nc < numComp; ++nc) {
-          const sscale = volInfo.scale[nc];
-          const useGO = vprop.getUseGradientOpacity(nc);
-          if (useGO) {
-            const gomin = vprop.getGradientOpacityMinimumOpacity(nc);
-            const gomax = vprop.getGradientOpacityMaximumOpacity(nc);
-            program.setUniformf(`gomin${nc}`, gomin);
-            program.setUniformf(`gomax${nc}`, gomax);
-            const goRange = [
-              vprop.getGradientOpacityMinimumValue(nc),
-              vprop.getGradientOpacityMaximumValue(nc),
-            ];
-            program.setUniformf(
-              `goscale${nc}`,
-              (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
-            );
-            program.setUniformf(
-              `goshift${nc}`,
-              (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) +
-                gomin
-            );
-          } else {
-            program.setUniformf(`gomin${nc}`, 1.0);
-            program.setUniformf(`gomax${nc}`, 1.0);
-            program.setUniformf(`goscale${nc}`, 0.0);
-            program.setUniformf(`goshift${nc}`, 1.0);
-          }
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      // set the component mix when independent
+      const numComp = model.scalarTexture[volIdx].getComponents();
+      const iComps = actor.getProperty().getIndependentComponents();
+
+      /*
+      TODO[multivolume]: Come back to independent component mixing
+
+      if (iComps && numComp >= 2) {
+        let totalComp = 0.0;
+        for (let i = 0; i < numComp; ++i) {
+          totalComp += actor.getProperty().getComponentWeight(i);
         }
-      } else {
-        const sscale = volInfo.scale[numComp - 1];
-        const gomin = vprop.getGradientOpacityMinimumOpacity(0);
-        const gomax = vprop.getGradientOpacityMaximumOpacity(0);
-        program.setUniformf('gomin0', gomin);
-        program.setUniformf('gomax0', gomax);
-        const goRange = [
-          vprop.getGradientOpacityMinimumValue(0),
-          vprop.getGradientOpacityMaximumValue(0),
-        ];
-        program.setUniformf(
-          'goscale0',
-          (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
-        );
-        program.setUniformf(
-          'goshift0',
-          (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) + gomin
-        );
+        for (let i = 0; i < numComp; ++i) {
+          program.setUniformf(
+            `mix${i}`,
+            actor.getProperty().getComponentWeight(i) / totalComp
+          );
+        }
+      }
+      */
+
+      // three levels of shift scale combined into one
+      // for performance in the fragment shader
+      for (let i = 0; i < numComp; ++i) {
+        const target = iComps ? i : 0;
+        const sscale = volInfo.scale[i];
+        const ofun = vprop.getScalarOpacity(target);
+        const oRange = ofun.getRange();
+        const oscale = sscale / (oRange[1] - oRange[0]);
+        const oshift =
+          (volInfo.offset[i] - oRange[0]) / (oRange[1] - oRange[0]);
+        // Create an object to store the per-component values for later
+        // We can call setUniform later on with this information
+        oshiftPerVolume[volIdx] = {} || oshiftPerVolume[volIdx];
+        oshiftPerVolume[volIdx][i] = oshift;
+
+        oscalePerVolume[volIdx] = {} || oscalePerVolume[volIdx];
+        oscalePerVolume[volIdx][i] = oscale;
+
+        const cfun = vprop.getRGBTransferFunction(target);
+        const cRange = cfun.getRange();
+        cshiftPerVolume[volIdx] = {} || cshiftPerVolume[volIdx];
+        cshiftPerVolume[volIdx][i] =
+          (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0]);
+
+        cscalePerVolume[volIdx] = {} || cscalePerVolume[volIdx];
+        cscalePerVolume[volIdx][i] = sscale / (cRange[1] - cRange[0]);
+      }
+
+      if (model.gopacity) {
+        if (iComps) {
+          for (let nc = 0; nc < numComp; ++nc) {
+            const sscale = volInfo.scale[nc];
+            const useGO = vprop.getUseGradientOpacity(nc);
+            if (useGO) {
+              const gomin = vprop.getGradientOpacityMinimumOpacity(nc);
+              const gomax = vprop.getGradientOpacityMaximumOpacity(nc);
+              program.setUniformf(`gomin${nc}`, gomin);
+              program.setUniformf(`gomax${nc}`, gomax);
+              const goRange = [
+                vprop.getGradientOpacityMinimumValue(nc),
+                vprop.getGradientOpacityMaximumValue(nc),
+              ];
+              program.setUniformf(
+                `goscale${nc}`,
+                (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
+              );
+              program.setUniformf(
+                `goshift${nc}`,
+                (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) +
+                  gomin
+              );
+            } else {
+              program.setUniformf(`gomin${nc}`, 1.0);
+              program.setUniformf(`gomax${nc}`, 1.0);
+              program.setUniformf(`goscale${nc}`, 0.0);
+              program.setUniformf(`goshift${nc}`, 1.0);
+            }
+          }
+        } else {
+          const sscale = volInfo.scale[numComp - 1];
+          const gomin = vprop.getGradientOpacityMinimumOpacity(0);
+          const gomax = vprop.getGradientOpacityMaximumOpacity(0);
+          program.setUniformf('gomin0', gomin);
+          program.setUniformf('gomax0', gomax);
+          const goRange = [
+            vprop.getGradientOpacityMinimumValue(0),
+            vprop.getGradientOpacityMaximumValue(0),
+          ];
+          program.setUniformf(
+            'goscale0',
+            (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
+          );
+          program.setUniformf(
+            'goshift0',
+            (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) + gomin
+          );
+        }
+      }
+
+      const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
+      if (vtkImageLabelOutline === true) {
+        const labelOutlineThickness = actor
+          .getProperty()
+          .getLabelOutlineThickness();
+
+        program.setUniformi('outlineThickness', labelOutlineThickness);
+      }
+
+      if (model.lastLightComplexity > 0) {
+        program.setUniformf('vAmbient', vprop.getAmbient());
+        program.setUniformf('vDiffuse', vprop.getDiffuse());
+        program.setUniformf('vSpecular', vprop.getSpecular());
+        program.setUniformf('vSpecularPower', vprop.getSpecularPower());
       }
     }
 
-    const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
-    if (vtkImageLabelOutline === true) {
-      const labelOutlineThickness = actor
-        .getProperty()
-        .getLabelOutlineThickness();
+    // Set Uniform arrays from compiled data per volume
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      const numComp = model.scalarTexture[volIdx].getComponents();
+      // const iComps = actor.getProperty().getIndependentComponents();
 
-      program.setUniformi('outlineThickness', labelOutlineThickness);
-    }
-
-    if (model.lastLightComplexity > 0) {
-      program.setUniformf('vAmbient', vprop.getAmbient());
-      program.setUniformf('vDiffuse', vprop.getDiffuse());
-      program.setUniformf('vSpecular', vprop.getSpecular());
-      program.setUniformf('vSpecularPower', vprop.getSpecularPower());
+      for (let i = 0; i < numComp; ++i) {
+        program.setUniformf(
+          `oshift${i}`,
+          flatPerComp(oshiftPerVolume, volIdx, i)
+        );
+        program.setUniformf(
+          `oscale${i}`,
+          flatPerComp(oscalePerVolume, volIdx, i)
+        );
+        program.setUniformf(
+          `cshift${i}`,
+          flatPerComp(cshiftPerVolume, volIdx, i)
+        );
+        program.setUniformf(
+          `cscale${i}`,
+          flatPerComp(cscalePerVolume, volIdx, i)
+        );
+      }
     }
   };
 
@@ -769,7 +834,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     return model.openGLRenderWindow.getFramebufferSize();
   };
 
-  publicAPI.renderPieceStart = (ren, actor) => {
+  publicAPI.renderPieceStart = (ren, actors) => {
+    const actor = actors[0];
+
     if (model.renderable.getAutoAdjustSampleDistances()) {
       const rwi = ren.getVTKWindow().getInteractor();
       const rft = rwi.getLastFrameTime();
@@ -1067,9 +1134,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.buildBufferObjects = (ren, actor) => {
-    const image = model.currentInput;
+    const volume = model.currentInput;
 
-    if (image === null) {
+    if (volume === null) {
       return;
     }
 
@@ -1091,7 +1158,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
     }
 
-    const numComp = image
+    const numComp = volume
       .getPointData()
       .getScalars()
       .getNumberOfComponents();
@@ -1191,10 +1258,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
 
     // rebuild the scalarTexture if the data has changed
-    toString = `${image.getMTime()}`;
+    toString = `${volume.getMTime()}`;
     if (model.scalarTextureString !== toString) {
       // Build the textures
-      const dims = image.getDimensions();
+      const dims = volume.getDimensions();
       model.scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
       model.scalarTexture.resetFormatAndType();
       model.scalarTexture.create3DFilterableFromRaw(
@@ -1202,11 +1269,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         dims[1],
         dims[2],
         numComp,
-        image
+        volume
           .getPointData()
           .getScalars()
           .getDataType(),
-        image
+        volume
           .getPointData()
           .getScalars()
           .getData()
@@ -1297,21 +1364,26 @@ export function extend(publicAPI, model, initialValues = {}) {
   macro.obj(model.VBOBuildTime, { mtime: 0 });
 
   model.tris = vtkHelper.newInstance();
-  model.scalarTexture = vtkOpenGLTexture.newInstance();
-  model.opacityTexture = vtkOpenGLTexture.newInstance();
-  model.colorTexture = vtkOpenGLTexture.newInstance();
+
+  // Per actor
+  model.scalarTexture = []; // Array of vtkOpenGLTexture.newInstance();
+  model.opacityTexture = []; // Array of vtkOpenGLTexture.newInstance();
+  model.colorTexture = []; // Array of vtkOpenGLTexture.newInstance();
+  model.idxToView = []; // Array of mat4
+  model.idxNormalMatrix = []; // Array mat3
+  model.modelToView = []; // Array of mat4
+  model.displayToView = []; // Array of mat4
+  model.displayToWorld = []; // Array of mat4
+
+  // Per scene
   model.jitterTexture = vtkOpenGLTexture.newInstance();
   model.jitterTexture.setWrapS(Wrap.REPEAT);
   model.jitterTexture.setWrapT(Wrap.REPEAT);
   model.framebuffer = vtkOpenGLFramebuffer.newInstance();
 
-  model.idxToView = mat4.create();
-  model.idxNormalMatrix = mat3.create();
-  model.modelToView = mat4.create();
-  model.displayToView = mat4.create();
-  model.displayToWorld = mat4.create();
-
   // Build VTK API
+  // TODO[multivolume]: Not sure if this is how we want to ingest volumes
+  // Might be better to use the getAncestor thing?
   macro.setGet(publicAPI, model, ['context', 'volumes']);
 
   // Object methods

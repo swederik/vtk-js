@@ -3,7 +3,7 @@
 /*=========================================================================
 
   Program:   Visualization Toolkit
-  Module:    vtkVolumeFS.glsl
+  Module:    vtkMultiVolumeFS.glsl
 
   Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
   All rights reserved.
@@ -14,8 +14,6 @@
      PURPOSE.  See the above copyright notice for more information.
 
 =========================================================================*/
-// Template for the polydata mappers fragment shader
-
 // the output of this shader
 //VTK::Output::Dec
 
@@ -27,7 +25,7 @@ varying vec3 vertexVCVSOutput;
 // always set vtkNumComponents 1,2,3,4
 //VTK::NumComponents
 
-// possibly define vtkUseTriliear
+// possibly define vtkUseTrilinear
 //VTK::TrilinearOn
 
 // possibly define vtkIndependentComponents
@@ -212,8 +210,8 @@ uniform int xreps;
 uniform float xstride;
 uniform float ystride;
 
-// if computing triliear values from multiple z slices
-#ifdef vtkTriliearOn
+// if computing trilinear values from multiple z slices
+#ifdef vtkTrilinearOn
 vec4 getTextureValue(vec3 ijk)
 {
   float zoff = 1.0/float(volumeDimensions.z);
@@ -827,7 +825,6 @@ vec2 computeRayDistances(vec3 rayDir, vec3 tdims)
     vec3 vPlaneNormal3 = vPlaneNormal3Arr[n];
     vec3 vPlaneNormal4 = vPlaneNormal4Arr[n];
     vec3 vPlaneNormal5 = vPlaneNormal5Arr[n];
-    vec3 vertexVCVSOutput = vertexVCVSOutputArr[n];
     vec3 vSpacing = vSpacingArr[n];
 
     vec3 vSize = vSpacing*(tdims - 1.0);
@@ -883,7 +880,6 @@ void computeIndexSpaceValues(out vec3 pos, out vec3 endPos, out float sampleDist
     vec3 vPlaneNormal3 = vPlaneNormal3Arr[n];
     vec3 vPlaneNormal4 = vPlaneNormal4Arr[n];
     vec3 vPlaneNormal5 = vPlaneNormal5Arr[n];
-    vec3 vertexVCVSOutput = vertexVCVSOutputArr[n];
     vec3 vOriginVC = vOriginVCArr[n];
     vec3 vVCToIJK = vVCToIJKArr[n];
 
@@ -916,7 +912,6 @@ void computeIndexSpaceValues(out vec3 pos, out vec3 endPos, out float sampleDist
 
 void main()
 {
-
   vec3 rayDirVC;
 
   if (cameraParallel == 1) {
@@ -924,9 +919,7 @@ void main()
     rayDirVC = vec3(0.0, 0.0, -1.0);
   } else {
     // camera is at 0,0,0 so rayDir for perspective is just the vc coord
-
-    // TODO[multivolume]: Average these across volumes?
-    rayDirVC = normalize(vertexVCVSOutput[0]);
+    rayDirVC = normalize(vertexVCVSOutput);
   }
 
   vec3 tdims = vec3(volumeDimensions);
