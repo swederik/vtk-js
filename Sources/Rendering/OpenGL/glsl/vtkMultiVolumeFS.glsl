@@ -25,6 +25,9 @@ varying vec3 vertexVCVSOutput;
 // always set vtkNumComponents 1,2,3,4
 //VTK::NumComponents
 
+// Array listing the number of components per volume
+uniform int numComps[numVolumes];
+
 // possibly define vtkUseTrilinear
 //VTK::TrilinearOn
 

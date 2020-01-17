@@ -108,14 +108,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         ).result;
       }
 
-      const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
+      // TODO[multivolume] Temporarily disabling this
+      /* const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
       if (vtkImageLabelOutline === true) {
         FSSource = vtkShaderProgram.substitute(
           FSSource,
           '//VTK::ImageLabelOutlineOn',
           '#define vtkImageLabelOutlineOn'
         ).result;
-      }
+      } */
 
       const numComp = model.scalarTexture.getComponents();
       FSSource = vtkShaderProgram.substitute(
@@ -188,8 +189,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         `${model.renderable.getBlendMode()}`
       ).result;
 
+      /*
+      TODO[multivolume]: Temporarily disabling this
       const averageIPScalarRange = model.renderable.getAverageIPScalarRange();
-
       // TODO: Adding the .0 at the end feels hacky
       FSSource = vtkShaderProgram.substitute(
         FSSource,
@@ -204,27 +206,36 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ).result;
 
       shaders.Fragment = FSSource;
-    }
+      */
 
-    // if we have a ztexture then declare it and use it
-    if (model.zBufferTexture !== null) {
-      FSSource = vtkShaderProgram.substitute(FSSource, '//VTK::ZBuffer::Dec', [
-        'uniform sampler2D zBufferTexture;',
-        'uniform float vpWidth;',
-        'uniform float vpHeight;',
-      ]).result;
-      FSSource = vtkShaderProgram.substitute(FSSource, '//VTK::ZBuffer::Impl', [
-        'vec4 depthVec = texture2D(zBufferTexture, vec2(gl_FragCoord.x / vpWidth, gl_FragCoord.y/vpHeight));',
-        'float zdepth = (depthVec.r*256.0 + depthVec.g)/257.0;',
-        'zdepth = zdepth * 2.0 - 1.0;',
-        'zdepth = -2.0 * camFar * camNear / (zdepth*(camFar-camNear)-(camFar+camNear)) - camNear;',
-        'zdepth = -zdepth/rayDir.z;',
-        'dists.y = min(zdepth,dists.y);',
-      ]).result;
-    }
+      // if we have a ztexture then declare it and use it
+      if (model.zBufferTexture !== null) {
+        FSSource = vtkShaderProgram.substitute(
+          FSSource,
+          '//VTK::ZBuffer::Dec',
+          [
+            'uniform sampler2D zBufferTexture;',
+            'uniform float vpWidth;',
+            'uniform float vpHeight;',
+          ]
+        ).result;
+        FSSource = vtkShaderProgram.substitute(
+          FSSource,
+          '//VTK::ZBuffer::Impl',
+          [
+            'vec4 depthVec = texture2D(zBufferTexture, vec2(gl_FragCoord.x / vpWidth, gl_FragCoord.y/vpHeight));',
+            'float zdepth = (depthVec.r*256.0 + depthVec.g)/257.0;',
+            'zdepth = zdepth * 2.0 - 1.0;',
+            'zdepth = -2.0 * camFar * camNear / (zdepth*(camFar-camNear)-(camFar+camNear)) - camNear;',
+            'zdepth = -zdepth/rayDir.z;',
+            'dists.y = min(zdepth,dists.y);',
+          ]
+        ).result;
+      }
 
-    // TODO[multivolume]: Are light directions impacted by combination of volumes?
-    publicAPI.replaceShaderLight(shaders, ren);
+      // TODO[multivolume]: Are light directions impacted by combination of volumes?
+      publicAPI.replaceShaderLight(shaders, ren);
+    }
   };
 
   publicAPI.replaceShaderLight = (shaders, ren) => {
@@ -662,7 +673,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
   };
 
-  publicAPI.setPropertyShaderParameters = (cellBO, ren, actor) => {
+  publicAPI.setPropertyShaderParameters = (cellBO, ren) => {
     const program = cellBO.getProgram();
 
     program.setUniformi('ctexture', model.colorTexture.getTextureUnit());
@@ -670,22 +681,31 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     program.setUniformi('jtexture', model.jitterTexture.getTextureUnit());
 
     const volInfo = model.scalarTexture.getVolumeInfo();
-    const vprop = actor.getProperty();
-
-    const flatPerComp = (obj, volIdx, comp) =>
-      obj[volIdx].map((perComp) => perComp[comp]);
-
-    const oscalePerVolume = [];
-    const oshiftPerVolume = [];
-    const cshiftPerVolume = [];
-    const cscalePerVolume = [];
-
+    const perVol = [];
     const numVolumes = model.volumes.length;
 
     for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      // Create an object to store the per-component values for later
+      // We call setUniform later on with this information
+      const actor = model.volumes[volIdx];
+      const vprop = actor.getProperty();
+
       // set the component mix when independent
-      const numComp = model.scalarTexture[volIdx].getComponents();
       const iComps = actor.getProperty().getIndependentComponents();
+      const numComp = model.scalarTexture[volIdx].getComponents();
+
+      const volumeData = {
+        oscale: [],
+        oshift: [],
+        cscale: [],
+        cshift: [],
+        ambient: null,
+        diffuse: null,
+        specular: null,
+        specularPower: null,
+        numComp,
+        iComps,
+      };
 
       /*
       TODO[multivolume]: Come back to independent component mixing
@@ -711,27 +731,19 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         const sscale = volInfo.scale[i];
         const ofun = vprop.getScalarOpacity(target);
         const oRange = ofun.getRange();
-        const oscale = sscale / (oRange[1] - oRange[0]);
-        const oshift =
+        volumeData.oscale[i] = sscale / (oRange[1] - oRange[0]);
+        volumeData.oshift[i] =
           (volInfo.offset[i] - oRange[0]) / (oRange[1] - oRange[0]);
-        // Create an object to store the per-component values for later
-        // We can call setUniform later on with this information
-        oshiftPerVolume[volIdx] = {} || oshiftPerVolume[volIdx];
-        oshiftPerVolume[volIdx][i] = oshift;
-
-        oscalePerVolume[volIdx] = {} || oscalePerVolume[volIdx];
-        oscalePerVolume[volIdx][i] = oscale;
 
         const cfun = vprop.getRGBTransferFunction(target);
         const cRange = cfun.getRange();
-        cshiftPerVolume[volIdx] = {} || cshiftPerVolume[volIdx];
-        cshiftPerVolume[volIdx][i] =
+        volumeData.cshift[i] =
           (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0]);
-
-        cscalePerVolume[volIdx] = {} || cscalePerVolume[volIdx];
-        cscalePerVolume[volIdx][i] = sscale / (cRange[1] - cRange[0]);
+        volumeData.cscale[i] = sscale / (cRange[1] - cRange[0]);
       }
 
+      /*
+      TODO[multivolume]: Temporarily disable gradient opacity
       if (model.gopacity) {
         if (iComps) {
           for (let nc = 0; nc < numComp; ++nc) {
@@ -781,8 +793,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) + gomin
           );
         }
-      }
+      } */
 
+      /*
+      TODO[multivolume]: Temporarily disabling labelmap outlines
       const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
       if (vtkImageLabelOutline === true) {
         const labelOutlineThickness = actor
@@ -790,40 +804,48 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           .getLabelOutlineThickness();
 
         program.setUniformi('outlineThickness', labelOutlineThickness);
-      }
+      } */
 
       if (model.lastLightComplexity > 0) {
-        program.setUniformf('vAmbient', vprop.getAmbient());
-        program.setUniformf('vDiffuse', vprop.getDiffuse());
-        program.setUniformf('vSpecular', vprop.getSpecular());
-        program.setUniformf('vSpecularPower', vprop.getSpecularPower());
+        volumeData.ambient = vprop.getAmbient();
+        volumeData.diffuse = vprop.getDiffuse();
+        volumeData.specular = vprop.getSpecular();
+        volumeData.specularPower = vprop.getSpecularPower();
       }
+
+      perVol.push(volumeData);
     }
 
     // Set Uniform arrays from compiled data per volume
-    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
-      const numComp = model.scalarTexture[volIdx].getComponents();
-      // const iComps = actor.getProperty().getIndependentComponents();
+    const numComps = perVol.map((v) => v.numComp);
+    const maxNumComp = Math.max(...numComps);
+    const keys = ['oscale', 'oshift', 'cshift', 'cscale'];
 
-      for (let i = 0; i < numComp; ++i) {
-        program.setUniformf(
-          `oshift${i}`,
-          flatPerComp(oshiftPerVolume, volIdx, i)
-        );
-        program.setUniformf(
-          `oscale${i}`,
-          flatPerComp(oscalePerVolume, volIdx, i)
-        );
-        program.setUniformf(
-          `cshift${i}`,
-          flatPerComp(cshiftPerVolume, volIdx, i)
-        );
-        program.setUniformf(
-          `cscale${i}`,
-          flatPerComp(cscalePerVolume, volIdx, i)
-        );
-      }
+    /* Aim here is to produce the following:
+
+    Example:
+    - Vol 1 has 1 comp
+    -  Vol 2 has 4 comp
+
+    oscale0 = [vol1comp1, vol2comp1, vol2comp1]
+    oscale1 = [0.0, vol2comp2]
+    oscale2 = [0.0, vol2comp3]
+    oscale3 = [0.0, vol2comp4]
+     */
+    for (let i = 0; i < maxNumComp; ++i) {
+      keys.forEach((key) => {
+        const value = perVol.map((v) => v[key][i]);
+
+        program.setUniformf(`${key}${i}`, value);
+        console.warn(`${key}${i}`, value);
+      });
     }
+
+    program.setUniformf('vAmbient', perVol.map((v) => v.ambient));
+    program.setUniformf('vDiffuse', perVol.map((v) => v.diffuse));
+    program.setUniformf('vSpecular', perVol.map((v) => v.specular));
+    program.setUniformf('vSpecularPower', perVol.map((v) => v.specularPower));
+    program.setUniformi('numComps', numComps);
   };
 
   publicAPI.getRenderTargetSize = () => {
