@@ -57,9 +57,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       model.framebuffer.setOpenGLRenderWindow(model.openGLRenderWindow);
 
       // Per Component?
-      model.scalarTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-      model.colorTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-      model.opacityTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+      model.perVol.forEach((volumeData) => {
+        const { scalarTexture, colorTexture, opacityTexture } = volumeData;
+
+        scalarTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+        colorTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+        opacityTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+      });
 
       // TODO[multivolume]: I don't quite understand this part, so maybe
       // we should be getting volumes from somewhere else?
@@ -607,9 +611,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniform3f(`vPlaneNormal${i}`, normal[0], normal[1], normal[2]);
       program.setUniformf(`vPlaneDistance${i}`, dist);
 
+      /*
+      TODO[multivolume]: Temporarily disabling labelmap outlines
       if (actor.getProperty().getUseLabelOutline()) {
         const volume = model.currentInput;
-        const worldToIndex = volume.getWorldToIndex();
+        const worldToIndex = imageData.getWorldToIndex();
 
         program.setUniformMatrix('vWCtoIDX', worldToIndex);
 
@@ -621,7 +627,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
         program.setUniformf('vpWidth', size[0]);
         program.setUniformf('vpHeight', size[1]);
-      }
+      } */
     }
 
     mat4.invert(model.displayToView, keyMats.vcdc);
@@ -1155,14 +1161,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     return false;
   };
 
-  publicAPI.buildBufferObjects = (ren, actor) => {
-    const volume = model.currentInput;
-
-    if (volume === null) {
+  publicAPI.buildBufferObjects = (ren) => {
+    if (!!model.volumes.length === null) {
       return;
     }
-
-    const vprop = actor.getProperty();
 
     if (!model.jitterTexture.getHandle()) {
       const oTable = new Uint8Array(32 * 32);
@@ -1180,128 +1182,156 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
     }
 
-    const numComp = volume
-      .getPointData()
-      .getScalars()
-      .getNumberOfComponents();
-    const iComps = vprop.getIndependentComponents();
-    const numIComps = iComps ? numComp : 1;
+    const numVolumes = model.volumes.length;
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      const volumeData = model.perVol[volIdx] || {};
+      const scalarTexture =
+        volumeData.scalarTexture || vtkOpenGLTexture.newInstance();
+      const opacityTexture =
+        volumeData.opacityTexture || vtkOpenGLTexture.newInstance();
+      const colorTexture =
+        volumeData.colorTexture || vtkOpenGLTexture.newInstance();
+      let {
+        scalarTextureString,
+        opacityTextureString,
+        colorTextureString,
+      } = volumeData;
 
-    // rebuild opacity tfun?
-    let toString = `${vprop.getMTime()}`;
-    if (model.opacityTextureString !== toString) {
-      const oWidth = 1024;
-      const oSize = oWidth * 2 * numIComps;
-      const ofTable = new Float32Array(oSize);
-      const tmpTable = new Float32Array(oWidth);
+      const actor = model.volumes[volIdx];
+      const imageData = actor.getMapper().getImageData();
+      const vprop = actor.getProperty();
+      const numComp = imageData
+        .getPointData()
+        .getScalars()
+        .getNumberOfComponents();
+      const iComps = vprop.getIndependentComponents();
+      const numIComps = iComps ? numComp : 1;
 
-      for (let c = 0; c < numIComps; ++c) {
-        const ofun = vprop.getScalarOpacity(c);
-        const opacityFactor =
-          model.renderable.getSampleDistance() /
-          vprop.getScalarOpacityUnitDistance(c);
+      // rebuild opacity tfun?
+      let toString = `${vprop.getMTime()}`;
+      if (opacityTextureString !== toString) {
+        const oWidth = 1024;
+        const oSize = oWidth * 2 * numIComps;
+        const ofTable = new Float32Array(oSize);
+        const tmpTable = new Float32Array(oWidth);
 
-        const oRange = ofun.getRange();
-        ofun.getTable(oRange[0], oRange[1], oWidth, tmpTable, 1);
-        // adjust for sample distance etc
-        for (let i = 0; i < oWidth; ++i) {
-          ofTable[c * oWidth * 2 + i] =
-            1.0 - (1.0 - tmpTable[i]) ** opacityFactor;
-          ofTable[c * oWidth * 2 + i + oWidth] = ofTable[c * oWidth * 2 + i];
+        for (let c = 0; c < numIComps; ++c) {
+          const ofun = vprop.getScalarOpacity(c);
+          const opacityFactor =
+            model.renderable.getSampleDistance() /
+            vprop.getScalarOpacityUnitDistance(c);
+
+          const oRange = ofun.getRange();
+          ofun.getTable(oRange[0], oRange[1], oWidth, tmpTable, 1);
+          // adjust for sample distance etc
+          for (let i = 0; i < oWidth; ++i) {
+            ofTable[c * oWidth * 2 + i] =
+              1.0 - (1.0 - tmpTable[i]) ** opacityFactor;
+            ofTable[c * oWidth * 2 + i + oWidth] = ofTable[c * oWidth * 2 + i];
+          }
         }
+
+        opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        opacityTexture.setMinificationFilter(Filter.LINEAR);
+        opacityTexture.setMagnificationFilter(Filter.LINEAR);
+
+        // use float texture where possible because we really need the resolution
+        // for this table. Errors in low values of opacity accumulate to
+        // visible artifacts. High values of opacity quickly terminate without
+        // artifacts.
+        if (
+          model.openGLRenderWindow.getWebgl2() ||
+          (model.context.getExtension('OES_texture_float') &&
+            model.context.getExtension('OES_texture_float_linear'))
+        ) {
+          opacityTexture.create2DFromRaw(
+            oWidth,
+            2 * numIComps,
+            1,
+            VtkDataTypes.FLOAT,
+            ofTable
+          );
+        } else {
+          const oTable = new Uint8Array(oSize);
+          for (let i = 0; i < oSize; ++i) {
+            oTable[i] = 255.0 * ofTable[i];
+          }
+          opacityTexture.create2DFromRaw(
+            oWidth,
+            2 * numIComps,
+            1,
+            VtkDataTypes.UNSIGNED_CHAR,
+            oTable
+          );
+        }
+        opacityTextureString = toString;
       }
 
-      model.opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
-      model.opacityTexture.setMinificationFilter(Filter.LINEAR);
-      model.opacityTexture.setMagnificationFilter(Filter.LINEAR);
+      // rebuild color tfun?
+      toString = `${vprop.getMTime()}`;
+      if (colorTextureString !== toString) {
+        const cWidth = 1024;
+        const cSize = cWidth * 2 * numIComps * 3;
+        const cTable = new Uint8Array(cSize);
+        const tmpTable = new Float32Array(cWidth * 3);
 
-      // use float texture where possible because we really need the resolution
-      // for this table. Errors in low values of opacity accumulate to
-      // visible artifacts. High values of opacity quickly terminate without
-      // artifacts.
-      if (
-        model.openGLRenderWindow.getWebgl2() ||
-        (model.context.getExtension('OES_texture_float') &&
-          model.context.getExtension('OES_texture_float_linear'))
-      ) {
-        model.opacityTexture.create2DFromRaw(
-          oWidth,
-          2 * numIComps,
-          1,
-          VtkDataTypes.FLOAT,
-          ofTable
-        );
-      } else {
-        const oTable = new Uint8Array(oSize);
-        for (let i = 0; i < oSize; ++i) {
-          oTable[i] = 255.0 * ofTable[i];
+        for (let c = 0; c < numIComps; ++c) {
+          const cfun = vprop.getRGBTransferFunction(c);
+          const cRange = cfun.getRange();
+          cfun.getTable(cRange[0], cRange[1], cWidth, tmpTable, 1);
+          for (let i = 0; i < cWidth * 3; ++i) {
+            cTable[c * cWidth * 6 + i] = 255.0 * tmpTable[i];
+            cTable[c * cWidth * 6 + i + cWidth * 3] = 255.0 * tmpTable[i];
+          }
         }
-        model.opacityTexture.create2DFromRaw(
-          oWidth,
+
+        colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        colorTexture.setMinificationFilter(Filter.LINEAR);
+        colorTexture.setMagnificationFilter(Filter.LINEAR);
+
+        colorTexture.create2DFromRaw(
+          cWidth,
           2 * numIComps,
-          1,
+          3,
           VtkDataTypes.UNSIGNED_CHAR,
-          oTable
+          cTable
         );
-      }
-      model.opacityTextureString = toString;
-    }
-
-    // rebuild color tfun?
-    toString = `${vprop.getMTime()}`;
-    if (model.colorTextureString !== toString) {
-      const cWidth = 1024;
-      const cSize = cWidth * 2 * numIComps * 3;
-      const cTable = new Uint8Array(cSize);
-      const tmpTable = new Float32Array(cWidth * 3);
-
-      for (let c = 0; c < numIComps; ++c) {
-        const cfun = vprop.getRGBTransferFunction(c);
-        const cRange = cfun.getRange();
-        cfun.getTable(cRange[0], cRange[1], cWidth, tmpTable, 1);
-        for (let i = 0; i < cWidth * 3; ++i) {
-          cTable[c * cWidth * 6 + i] = 255.0 * tmpTable[i];
-          cTable[c * cWidth * 6 + i + cWidth * 3] = 255.0 * tmpTable[i];
-        }
+        colorTextureString = toString;
       }
 
-      model.colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
-      model.colorTexture.setMinificationFilter(Filter.LINEAR);
-      model.colorTexture.setMagnificationFilter(Filter.LINEAR);
+      // rebuild the scalarTexture if the data has changed
+      toString = `${imageData.getMTime()}`;
+      if (scalarTextureString !== toString) {
+        // Build the textures
+        const dims = imageData.getDimensions();
+        scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        scalarTexture.resetFormatAndType();
+        scalarTexture.create3DFilterableFromRaw(
+          dims[0],
+          dims[1],
+          dims[2],
+          numComp,
+          imageData
+            .getPointData()
+            .getScalars()
+            .getDataType(),
+          imageData
+            .getPointData()
+            .getScalars()
+            .getData()
+        );
 
-      model.colorTexture.create2DFromRaw(
-        cWidth,
-        2 * numIComps,
-        3,
-        VtkDataTypes.UNSIGNED_CHAR,
-        cTable
-      );
-      model.colorTextureString = toString;
-    }
+        scalarTextureString = toString;
+      }
 
-    // rebuild the scalarTexture if the data has changed
-    toString = `${volume.getMTime()}`;
-    if (model.scalarTextureString !== toString) {
-      // Build the textures
-      const dims = volume.getDimensions();
-      model.scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
-      model.scalarTexture.resetFormatAndType();
-      model.scalarTexture.create3DFilterableFromRaw(
-        dims[0],
-        dims[1],
-        dims[2],
-        numComp,
-        volume
-          .getPointData()
-          .getScalars()
-          .getDataType(),
-        volume
-          .getPointData()
-          .getScalars()
-          .getData()
-      );
-      // console.log(model.scalarTexture.get());
-      model.scalarTextureString = toString;
+      // TODO: not sure this resetting is necessary since the
+      // variables are pulled from the object originally
+      volumeData.colorTexture = colorTexture;
+      volumeData.colorTextureString = colorTextureString;
+      volumeData.scalarTexture = scalarTexture;
+      volumeData.scalarTextureString = scalarTextureString;
+      volumeData.opacityTexture = opacityTexture;
+      volumeData.opacityTextureString = opacityTextureString;
     }
 
     if (!model.tris.getCABO().getElementCount()) {
@@ -1349,12 +1379,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 const DEFAULT_VALUES = {
   context: null,
   VBOBuildTime: null,
-  scalarTexture: null,
-  scalarTextureString: null,
-  opacityTexture: null,
-  opacityTextureString: null,
-  colorTexture: null,
-  colorTextureString: null,
   jitterTexture: null,
   tris: null,
   framebuffer: null,
@@ -1388,9 +1412,7 @@ export function extend(publicAPI, model, initialValues = {}) {
   model.tris = vtkHelper.newInstance();
 
   // Per actor
-  model.scalarTexture = []; // Array of vtkOpenGLTexture.newInstance();
-  model.opacityTexture = []; // Array of vtkOpenGLTexture.newInstance();
-  model.colorTexture = []; // Array of vtkOpenGLTexture.newInstance();
+  model.perVol = [];
   model.idxToView = []; // Array of mat4
   model.idxNormalMatrix = []; // Array mat3
   model.modelToView = []; // Array of mat4
