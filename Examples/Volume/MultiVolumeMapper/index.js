@@ -84,6 +84,8 @@ renderer.addVolume(redCube.actor);
 renderer.addVolume(blueCube.actor);
 // renderer.addVolume(greenCube.actor);
 
+renderer.setUseMultiVolumeRendering(true);
+
 renderer.resetCamera();
 renderer.getActiveCamera().elevation(-70);
 renderWindow.render();

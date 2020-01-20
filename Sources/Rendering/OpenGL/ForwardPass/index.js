@@ -121,7 +121,7 @@ export function extend(publicAPI, model, initialValues = {}) {
   vtkRenderPass.extend(publicAPI, model, initialValues);
 
   macro.get(publicAPI, model, ['framebuffer']);
-  macro.setGet(publicAPI, model, ['depthRequested']);
+  macro.setGet(publicAPI, model, ['depthRequested', 'volumeCount']);
 
   // Object methods
   vtkForwardPass(publicAPI, model);

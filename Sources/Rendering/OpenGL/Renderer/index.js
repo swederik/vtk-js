@@ -28,13 +28,33 @@ function vtkOpenGLRenderer(publicAPI, model) {
       publicAPI.updateLights();
       publicAPI.prepareNodes();
 
-      // model.renderable.getVolumes()
-      const multiVolumeMapper = vtkMultiVolumeMapper.newInstance();
-      multiVolumeMapper.setVolumes(model.renderable.getVolumes());
-
-      publicAPI.addMissingNode(multiVolumeMapper);
       publicAPI.addMissingNode(model.renderable.getActiveCamera());
-      publicAPI.addMissingNodes(model.renderable.getViewPropsWithNestedProps());
+
+      /* If multi-volume rendering is enabled, we find the viewProps of all
+         volumes and remove them manually, then we set these volumes as a
+         property of the multivolume renderer class, and add this node
+         to the scene graph.
+       */
+      if (model.renderable.getUseMultiVolumeRendering()) {
+        const multiVolumeMapper = vtkMultiVolumeMapper.newInstance();
+        multiVolumeMapper.setVolumes(model.renderable.getVolumes());
+
+        const viewNodes = model.renderable.getViewPropsWithNestedProps();
+        const nonVolumeViewNodes = viewNodes.filter(
+          (node) => !node.isA('vtkVolume')
+        );
+
+        if (nonVolumeViewNodes.length) {
+          publicAPI.addMissingNodes(nonVolumeViewNodes);
+        }
+
+        publicAPI.addMissingNode(multiVolumeMapper);
+      } else {
+        publicAPI.addMissingNodes(
+          model.renderable.getViewPropsWithNestedProps()
+        );
+      }
+
       publicAPI.removeUnusedNodes();
     }
   };

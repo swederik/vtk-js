@@ -1,3 +1,4 @@
+/* eslint no-debugger:0 no-console:0 */
 import macro from 'vtk.js/Sources/macro';
 import { vec3, mat3, mat4 } from 'gl-matrix';
 import vtkDataArray from 'vtk.js/Sources/Common/Core/DataArray';
@@ -15,8 +16,6 @@ import {
   Filter,
 } from 'vtk.js/Sources/Rendering/OpenGL/Texture/Constants';
 import { InterpolationType } from 'vtk.js/Sources/Rendering/Core/VolumeProperty/Constants';
-import { BlendMode } from 'vtk.js/Sources/Rendering/Core/VolumeMapper/Constants';
-
 import vtkVolumeVS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkVolumeVS.glsl';
 import vtkMultiVolumeFS from 'vtk.js/Sources/Rendering/OpenGL/glsl/vtkMultiVolumeFS.glsl';
 
@@ -34,6 +33,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     model.zBufferTexture = null;
   };
 
+  publicAPI.queryPass = (prepass, renderPass) => {
+    if (prepass) {
+      if (!model.renderable || !model.renderable.getVolumes().length) {
+        return;
+      }
+
+      const volumeCount = model.renderable.getVolumes().length;
+
+      renderPass.setVolumeCount(volumeCount);
+    }
+  };
+
   // ohh someone is doing a zbuffer pass, use that for
   // intermixed volume rendering
   publicAPI.opaqueZBufferPass = (prepass, renderPass) => {
@@ -47,7 +58,20 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
   // Renders myself
   publicAPI.volumePass = (prepass, renderPass) => {
+    console.warn(`volumePass: prepass=${prepass}`);
     if (prepass) {
+      model.openGLRenderer = publicAPI.getFirstAncestorOfType(
+        'vtkOpenGLRenderer'
+      );
+
+      const ren = model.openGLRenderer.getRenderable();
+      if (!ren.getUseMultiVolumeRendering()) {
+        console.warn(
+          'MultiVolumeMapper:volumePass useMultiVolumeMapper is not true'
+        );
+        return;
+      }
+
       model.openGLRenderWindow = publicAPI.getFirstAncestorOfType(
         'vtkOpenGLRenderWindow'
       );
@@ -56,87 +80,51 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       model.jitterTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
       model.framebuffer.setOpenGLRenderWindow(model.openGLRenderWindow);
 
-      // Per Component?
-      model.perVol.forEach((volumeData) => {
-        const { scalarTexture, colorTexture, opacityTexture } = volumeData;
-
-        scalarTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-        colorTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-        opacityTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-      });
-
-      // TODO[multivolume]: I don't quite understand this part, so maybe
-      // we should be getting volumes from somewhere else?
-      //
-      // model.openGLVolume = publicAPI.getFirstAncestorOfType('vtkOpenGLVolume');
-      // const actor = model.openGLVolume.getRenderable();
-
-      const actors = model.getVolumes();
-      model.openGLRenderer = publicAPI.getFirstAncestorOfType(
-        'vtkOpenGLRenderer'
-      );
-      const ren = model.openGLRenderer.getRenderable();
       model.openGLCamera = model.openGLRenderer.getViewNodeFor(
         ren.getActiveCamera()
       );
+
+      model.perVol.forEach((volData) => {
+        volData.scalarTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+      });
+      model.colorTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+      model.opacityTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
+
+      const actors = model.renderable.getVolumes();
+
       publicAPI.renderPiece(ren, actors);
     }
   };
 
-  publicAPI.buildShaders = (shaders, ren, actor) => {
-    publicAPI.getShaderTemplate(shaders, ren, actor);
-    publicAPI.replaceShaderValues(shaders, ren, actor);
+  publicAPI.buildShaders = (shaders, ren, actors) => {
+    publicAPI.getShaderTemplate(shaders, ren, actors);
+    publicAPI.replaceShaderValues(shaders, ren, actors);
   };
 
-  publicAPI.getShaderTemplate = (shaders, ren, actor) => {
+  publicAPI.getShaderTemplate = (shaders, ren, actors) => {
     shaders.Vertex = vtkVolumeVS;
     shaders.Fragment = vtkMultiVolumeFS;
     shaders.Geometry = '';
   };
 
-  publicAPI.replaceShaderValues = (shaders, ren) => {
+  publicAPI.replaceShaderValues = (shaders, ren, actors) => {
+    console.warn('replaceShaderValues');
     let FSSource = shaders.Fragment;
 
-    const numVolumes = model.volumes.length;
+    const numVolumes = actors.length;
 
     for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
-      const actor = model.volumes[volIdx];
+      const actor = actors[volIdx];
+      model.perVol[volIdx] = model.perVol[volIdx] || {};
+      model.perVol[volIdx].scalarTexture = vtkOpenGLTexture.newInstance();
+      const numComp = model.perVol[volIdx].scalarTexture.getComponents();
 
       // define some values in the shader
       const iType = actor.getProperty().getInterpolationType();
-      if (iType === InterpolationType.LINEAR) {
-        FSSource = vtkShaderProgram.substitute(
-          FSSource,
-          '//VTK::TrilinearOn',
-          '#define vtkTrilinearOn'
-        ).result;
-      }
-
-      // TODO[multivolume] Temporarily disabling this
-      /* const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
-      if (vtkImageLabelOutline === true) {
-        FSSource = vtkShaderProgram.substitute(
-          FSSource,
-          '//VTK::ImageLabelOutlineOn',
-          '#define vtkImageLabelOutlineOn'
-        ).result;
-      } */
-
-      const numComp = model.scalarTexture.getComponents();
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::NumComponents',
-        `#define vtkNumComponents ${numComp}`
-      ).result;
+      model.perVol[volIdx].iType = iType;
 
       const iComps = actor.getProperty().getIndependentComponents();
-      if (iComps) {
-        FSSource = vtkShaderProgram.substitute(
-          FSSource,
-          '//VTK::IndependentComponentsOn',
-          '#define vtkIndependentComponentsOn'
-        ).result;
-      }
+      model.perVol[volIdx].iComps = iComps;
 
       // WebGL only supports loops over constants
       // and does not support while loops so we
@@ -155,8 +143,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         (ext[5] - ext[4]) * spc[2]
       );
 
-      const maxSamples =
-        vec3.length(vsize) / model.renderable.getSampleDistance();
+      const maxSamples = vec3.length(vsize) / 1;
 
       FSSource = vtkShaderProgram.substitute(
         FSSource,
@@ -186,32 +173,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         ).result;
       }
 
-      // Set the BlendMode approach
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::BlendMode',
-        `${model.renderable.getBlendMode()}`
-      ).result;
-
-      /*
-      TODO[multivolume]: Temporarily disabling this
-      const averageIPScalarRange = model.renderable.getAverageIPScalarRange();
-      // TODO: Adding the .0 at the end feels hacky
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::AverageIPScalarRangeMin',
-        `${averageIPScalarRange[0]}.0`
-      ).result;
-
-      FSSource = vtkShaderProgram.substitute(
-        FSSource,
-        '//VTK::AverageIPScalarRangeMax',
-        `${averageIPScalarRange[1]}.0`
-      ).result;
-
-      shaders.Fragment = FSSource;
-      */
-
       // if we have a ztexture then declare it and use it
       if (model.zBufferTexture !== null) {
         FSSource = vtkShaderProgram.substitute(
@@ -237,9 +198,36 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         ).result;
       }
 
-      // TODO[multivolume]: Are light directions impacted by combination of volumes?
       publicAPI.replaceShaderLight(shaders, ren);
     }
+
+    const anyVolumesNeedNearestNeighbour = model.perVol.some(
+      (v) => v.iType === InterpolationType.Nearest
+    );
+    if (anyVolumesNeedNearestNeighbour === false) {
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::TrilinearOn',
+        '#define vtkTrilinearOn'
+      ).result;
+    }
+
+    const maxNumComps = 1;
+    if (!maxNumComps > 1) {
+      FSSource = vtkShaderProgram.substitute(
+        FSSource,
+        '//VTK::IndependentComponentsOn',
+        '#define vtkIndependentComponentsOn'
+      ).result;
+    }
+
+    FSSource = vtkShaderProgram.substitute(
+      FSSource,
+      '//VTK::NumVolumes',
+      `#define vtkNumVolumes ${numVolumes}`
+    ).result;
+
+    shaders.Fragment = FSSource;
   };
 
   publicAPI.replaceShaderLight = (shaders, ren) => {
@@ -299,13 +287,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     shaders.Fragment = FSSource;
   };
 
-  publicAPI.getNeedToRebuildShaders = (cellBO, ren, actor) => {
+  publicAPI.getNeedToRebuildShaders = (cellBO, ren, actors) => {
+    // TODO[multivolume] Come back to this...
+
+    const actor = actors[0];
     // do we need lighting?
     let lightComplexity = 0;
-    if (
-      actor.getProperty().getShade() &&
-      model.renderable.getBlendMode() === BlendMode.COMPOSITE_BLEND
-    ) {
+    if (actor.getProperty().getShade()) {
       // consider the lighting complexity to determine which case applies
       // simple headlight, Light Kit, the whole feature set of VTK
       lightComplexity = 0;
@@ -358,14 +346,14 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     return false;
   };
 
-  publicAPI.updateShaders = (cellBO, ren, actor) => {
+  publicAPI.updateShaders = (cellBO, ren, actors) => {
     model.lastBoundBO = cellBO;
 
     // has something changed that would require us to recreate the shader?
-    if (publicAPI.getNeedToRebuildShaders(cellBO, ren, actor)) {
+    if (publicAPI.getNeedToRebuildShaders(cellBO, ren, actors)) {
       const shaders = { Vertex: null, Fragment: null, Geometry: null };
 
-      publicAPI.buildShaders(shaders, ren, actor);
+      publicAPI.buildShaders(shaders, ren, actors);
 
       // compile and bind the program if needed
       const newShader = model.openGLRenderWindow
@@ -391,12 +379,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
 
     cellBO.getVAO().bind();
-    publicAPI.setMapperShaderParameters(cellBO, ren, actor);
-    publicAPI.setCameraShaderParameters(cellBO, ren, actor);
-    publicAPI.setPropertyShaderParameters(cellBO, ren, actor);
+    publicAPI.setMapperShaderParameters(cellBO, ren, actors);
+    publicAPI.setCameraShaderParameters(cellBO, ren, actors);
+    publicAPI.setPropertyShaderParameters(cellBO, ren, actors);
   };
 
-  publicAPI.setMapperShaderParameters = (cellBO, ren, actor) => {
+  publicAPI.setMapperShaderParameters = (cellBO, ren) => {
     // Now to update the VAO too, if necessary.
     const program = cellBO.getProgram();
 
@@ -428,8 +416,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       cellBO.getAttributeUpdateTime().modified();
     }
 
-    program.setUniformi('texture1', model.scalarTexture.getTextureUnit());
-    program.setUniformf('sampleDistance', model.renderable.getSampleDistance());
+    model.perVol.forEach(({ scalarTexture }, i) => {
+      program.setUniformi(`texture${i}`, scalarTexture.getTextureUnit());
+    });
+
+    program.setUniformf('sampleDistance', 1);
 
     // if we have a zbuffer texture then set it
     if (model.zBufferTexture !== null) {
@@ -443,7 +434,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
   };
 
-  publicAPI.setCameraShaderParameters = (cellBO, ren, actor) => {
+  publicAPI.setCameraShaderParameters = (cellBO, ren, actors) => {
     // // [WMVD]C == {world, model, view, display} coordinates
     // // E.g., WCDC == world to display coordinate transformation
     const keyMats = model.openGLCamera.getKeyMatrices(ren);
@@ -459,16 +450,22 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     program.setUniformf('camNear', crange[0]);
     program.setUniformf('camFar', crange[1]);
 
-    const bounds = model.currentInput.getBounds();
+    // const bounds = model.currentInput.getBounds();
     const dims = model.currentInput.getDimensions();
 
     // compute the viewport bounds of the volume
     // we will only render those fragments.
     const pos = vec3.create();
-    const dir = vec3.create();
+    // const dir = vec3.create();
 
     // TODO[multivolume]: Update input to vertex shader to compute dcxmin
     // dcxmax, dcymin,dcymax from the combination of volumes
+    const dcxmin = -1.0;
+    const dcxmax = 1.0;
+    const dcymin = -1.0;
+    const dcymax = 1.0;
+
+    /*
     let dcxmin = 1.0;
     let dcxmax = -1.0;
     let dcymin = 1.0;
@@ -500,7 +497,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       dcxmax = Math.max(pos[0], dcxmax);
       dcymin = Math.min(pos[1], dcymin);
       dcymax = Math.max(pos[1], dcymax);
-    }
+    } */
 
     program.setUniformf('dcxmin', dcxmin);
     program.setUniformf('dcxmax', dcxmax);
@@ -511,8 +508,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniformi('cameraParallel', cam.getParallelProjection());
     }
 
-    const ext = model.currentInput.getExtent();
-    const spc = model.currentInput.getSpacing();
+    const actor = actors[0];
+    const ext = actor.getExtent();
+    const spc = actor.getSpacing();
     const vsize = vec3.create();
     vec3.set(
       vsize,
@@ -529,7 +527,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     program.setUniform3f('vOriginVC', pos[0], pos[1], pos[2]);
 
     // apply the volume directions
-    const i2wmat4 = model.currentInput.getIndexToWorld();
+    const i2wmat4 = actor.getIndexToWorld();
     mat4.multiply(model.idxToView, model.modelToView, i2wmat4);
 
     mat3.multiply(
@@ -543,8 +541,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       model.currentInput.getDirection()
     );
 
-    const maxSamples =
-      vec3.length(vsize) / model.renderable.getSampleDistance();
+    const maxSamples = vec3.length(vsize) / 1;
     if (maxSamples > model.renderable.getMaximumSamplesPerRay()) {
       vtkWarningMacro(`The number of steps required ${Math.ceil(
         maxSamples
@@ -562,9 +559,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     program.setUniform3i('volumeDimensions', dims[0], dims[1], dims[2]);
 
     if (!model.openGLRenderWindow.getWebgl2()) {
-      const volInfo = model.scalarTexture.getVolumeInfo();
-      program.setUniformf('texWidth', model.scalarTexture.getWidth());
-      program.setUniformf('texHeight', model.scalarTexture.getHeight());
+      const volInfo = model.perVol[0].scalarTexture.getVolumeInfo();
+      program.setUniformf('texWidth', model.perVol[0].scalarTexture.getWidth());
+      program.setUniformf(
+        'texHeight',
+        model.perVol[0].scalarTexture.getHeight()
+      );
       program.setUniformi('xreps', volInfo.xreps);
       program.setUniformf('xstride', volInfo.xstride);
       program.setUniformf('ystride', volInfo.ystride);
@@ -610,28 +610,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // specify the planes in view coordinates
       program.setUniform3f(`vPlaneNormal${i}`, normal[0], normal[1], normal[2]);
       program.setUniformf(`vPlaneDistance${i}`, dist);
-
-      /*
-      TODO[multivolume]: Temporarily disabling labelmap outlines
-      if (actor.getProperty().getUseLabelOutline()) {
-        const volume = model.currentInput;
-        const worldToIndex = imageData.getWorldToIndex();
-
-        program.setUniformMatrix('vWCtoIDX', worldToIndex);
-
-        // Get the display coordinate to world coordinate transformation matrix.
-        mat4.invert(model.displayToWorld, keyMats.wcdc);
-        program.setUniformMatrix('DCWCMatrix', model.displayToWorld);
-
-        const size = publicAPI.getRenderTargetSize();
-
-        program.setUniformf('vpWidth', size[0]);
-        program.setUniformf('vpHeight', size[1]);
-      } */
     }
-
-    mat4.invert(model.displayToView, keyMats.vcdc);
-    program.setUniformMatrix('DCVCMatrix', model.displayToView);
 
     // handle lighting values
     switch (model.lastLightComplexity) {
@@ -679,26 +658,26 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
   };
 
-  publicAPI.setPropertyShaderParameters = (cellBO, ren) => {
+  publicAPI.setPropertyShaderParameters = (cellBO, ren, actors) => {
     const program = cellBO.getProgram();
 
     program.setUniformi('ctexture', model.colorTexture.getTextureUnit());
     program.setUniformi('otexture', model.opacityTexture.getTextureUnit());
     program.setUniformi('jtexture', model.jitterTexture.getTextureUnit());
 
-    const volInfo = model.scalarTexture.getVolumeInfo();
     const perVol = [];
-    const numVolumes = model.volumes.length;
+    const numVolumes = actors.length;
 
     for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
       // Create an object to store the per-component values for later
       // We call setUniform later on with this information
-      const actor = model.volumes[volIdx];
+      const actor = actors[volIdx];
       const vprop = actor.getProperty();
+      const volInfo = model.perVol[volIdx].scalarTexture.getVolumeInfo();
 
       // set the component mix when independent
       const iComps = actor.getProperty().getIndependentComponents();
-      const numComp = model.scalarTexture[volIdx].getComponents();
+      const numComp = model.perVol[volIdx].scalarTexture.getComponents();
 
       const volumeData = {
         oscale: [],
@@ -801,17 +780,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         }
       } */
 
-      /*
-      TODO[multivolume]: Temporarily disabling labelmap outlines
-      const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
-      if (vtkImageLabelOutline === true) {
-        const labelOutlineThickness = actor
-          .getProperty()
-          .getLabelOutlineThickness();
-
-        program.setUniformi('outlineThickness', labelOutlineThickness);
-      } */
-
       if (model.lastLightComplexity > 0) {
         volumeData.ambient = vprop.getAmbient();
         volumeData.diffuse = vprop.getDiffuse();
@@ -863,57 +831,54 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.renderPieceStart = (ren, actors) => {
-    const actor = actors[0];
+    // TODO[multivolume] - This section of the code
+    // seems to compute sample distances
+    // We need to update this for multiple volumes.
 
-    if (model.renderable.getAutoAdjustSampleDistances()) {
-      const rwi = ren.getVTKWindow().getInteractor();
-      const rft = rwi.getLastFrameTime();
-      // console.log(`last frame time ${Math.floor(1.0 / rft)}`);
+    const rwi = ren.getVTKWindow().getInteractor();
+    const rft = rwi.getLastFrameTime();
+    // console.log(`last frame time ${Math.floor(1.0 / rft)}`);
 
-      // frame time is typically for a couple frames prior
-      // which makes it messy, so keep long running averages
-      // of frame times and pixels rendered
-      model.avgFrameTime = 0.97 * model.avgFrameTime + 0.03 * rft;
-      model.avgWindowArea =
-        0.97 * model.avgWindowArea + 0.03 / (model.lastXYF * model.lastXYF);
+    // frame time is typically for a couple frames prior
+    // which makes it messy, so keep long running averages
+    // of frame times and pixels rendered
+    model.avgFrameTime = 0.97 * model.avgFrameTime + 0.03 * rft;
+    model.avgWindowArea =
+      0.97 * model.avgWindowArea + 0.03 / (model.lastXYF * model.lastXYF);
 
-      if (
-        ren
-          .getVTKWindow()
-          .getInteractor()
-          .isAnimating()
-      ) {
-        // compute target xy factor
-        let txyf = Math.sqrt(
-          (model.avgFrameTime * rwi.getDesiredUpdateRate()) /
-            model.avgWindowArea
-        );
+    if (
+      ren
+        .getVTKWindow()
+        .getInteractor()
+        .isAnimating()
+    ) {
+      // compute target xy factor
+      let txyf = Math.sqrt(
+        (model.avgFrameTime * rwi.getDesiredUpdateRate()) / model.avgWindowArea
+      );
 
-        // limit subsampling to a factor of 10
-        if (txyf > 10.0) {
-          txyf = 10.0;
-        }
-
-        model.targetXYF = txyf;
-      } else {
-        model.targetXYF = Math.sqrt(
-          (model.avgFrameTime * rwi.getStillUpdateRate()) / model.avgWindowArea
-        );
+      // limit subsampling to a factor of 10
+      if (txyf > 10.0) {
+        txyf = 10.0;
       }
 
-      // have some inertia to change states around 1.43
-      if (model.targetXYF < 1.53 && model.targetXYF > 1.33) {
-        model.targetXYF = model.lastXYF;
-      }
-
-      // and add some inertia to change at all
-      if (Math.abs(1.0 - model.targetXYF / model.lastXYF) < 0.1) {
-        model.targetXYF = model.lastXYF;
-      }
-      model.lastXYF = model.targetXYF;
+      model.targetXYF = txyf;
     } else {
-      model.lastXYF = model.renderable.getImageSampleDistance();
+      model.targetXYF = Math.sqrt(
+        (model.avgFrameTime * rwi.getStillUpdateRate()) / model.avgWindowArea
+      );
     }
+
+    // have some inertia to change states around 1.43
+    if (model.targetXYF < 1.53 && model.targetXYF > 1.33) {
+      model.targetXYF = model.lastXYF;
+    }
+
+    // and add some inertia to change at all
+    if (Math.abs(1.0 - model.targetXYF / model.lastXYF) < 0.1) {
+      model.targetXYF = model.lastXYF;
+    }
+    model.lastXYF = model.targetXYF;
 
     // only use FBO beyond this value
     if (model.lastXYF <= 1.43) {
@@ -925,22 +890,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const xyf = model.lastXYF;
 
     const size = model.openGLRenderWindow.getFramebufferSize();
-    // const newSize = [
-    //   Math.floor((size[0] / xyf) + 0.5),
-    //   Math.floor((size[1] / xyf) + 0.5)];
-
-    // const diag = vtkBoundingBox.getDiagonalLength(model.currentInput.getBounds());
-
-    // // so what is the resulting sample size roughly
-    // console.log(`sam size ${diag / newSize[0]} ${diag / newSize[1]} ${model.renderable.getImageSampleDistance()}`);
-
-    // // if the sample distance is getting far from the image sample dist
-    // if (2.0 * diag / (newSize[0] + newSize[1]) > 4 * model.renderable.getSampleDistance()) {
-    //   model.renderable.setSampleDistance(4.0 * model.renderable.getSampleDistance());
-    // }
-    // if (2.0 * diag / (newSize[0] + newSize[1]) < 0.25 * model.renderable.getSampleDistance()) {
-    //   model.renderable.setSampleDistance(0.25 * model.renderable.getSampleDistance());
-    // }
 
     // create/resize framebuffer if needed
     if (xyf > 1.43) {
@@ -979,16 +928,23 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     model.context.disable(model.context.DEPTH_TEST);
 
     // make sure the BOs are up to date
-    publicAPI.updateBufferObjects(ren, actor);
+    publicAPI.updateBufferObjects(ren, actors);
 
     // set interpolation on the texture based on property setting
-    const iType = actor.getProperty().getInterpolationType();
-    if (iType === InterpolationType.NEAREST) {
-      model.scalarTexture.setMinificationFilter(Filter.NEAREST);
-      model.scalarTexture.setMagnificationFilter(Filter.NEAREST);
-    } else {
-      model.scalarTexture.setMinificationFilter(Filter.LINEAR);
-      model.scalarTexture.setMagnificationFilter(Filter.LINEAR);
+    // TODO[multivolume]: Set these per volume
+
+    const numVolumes = model.volumes.length;
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      const actor = actors[volIdx];
+      const iType = actor.getProperty().getInterpolationType();
+      const scalarTexture = model.perVol[volIdx].scalarTexture;
+      if (iType === InterpolationType.NEAREST) {
+        scalarTexture.setMinificationFilter(Filter.NEAREST);
+        scalarTexture.setMagnificationFilter(Filter.NEAREST);
+      } else {
+        scalarTexture.setMinificationFilter(Filter.LINEAR);
+        scalarTexture.setMagnificationFilter(Filter.LINEAR);
+      }
     }
 
     // Bind the OpenGL, this is shared between the different primitive/cell types.
@@ -1000,31 +956,33 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
   };
 
-  publicAPI.renderPieceDraw = (ren, actor) => {
+  publicAPI.renderPieceDraw = (ren, actors) => {
     const gl = model.context;
 
     // render the texture
-    model.scalarTexture.activate();
+    model.perVol.forEach((volData) => {
+      volData.scalarTexture.activate();
+    });
+
     model.opacityTexture.activate();
     model.colorTexture.activate();
     model.jitterTexture.activate();
 
-    publicAPI.updateShaders(model.tris, ren, actor);
+    publicAPI.updateShaders(model.tris, ren, actors);
 
     // First we do the triangles, update the shader, set uniforms, etc.
-    // for (let i = 0; i < 11; ++i) {
-    //   gl.drawArrays(gl.TRIANGLES, 66 * i, 66);
-    // }
     gl.drawArrays(gl.TRIANGLES, 0, model.tris.getCABO().getElementCount());
     model.tris.getVAO().release();
 
-    model.scalarTexture.deactivate();
+    model.perVol.forEach((volData) => {
+      volData.scalarTexture.deactivate();
+    });
     model.colorTexture.deactivate();
     model.opacityTexture.deactivate();
     model.jitterTexture.deactivate();
   };
 
-  publicAPI.renderPieceFinish = (ren, actor) => {
+  publicAPI.renderPieceFinish = (ren, actors) => {
     // if we have a zbuffer texture then deactivate it
     if (model.zBufferTexture !== null) {
       model.zBufferTexture.deactivate();
@@ -1116,23 +1074,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
   };
 
-  publicAPI.renderPiece = (ren, actor) => {
-    publicAPI.invokeEvent({ type: 'StartEvent' });
-    model.renderable.update();
-    model.currentInput = model.renderable.getInputData();
-    publicAPI.invokeEvent({ type: 'EndEvent' });
-
-    if (!model.currentInput) {
+  publicAPI.renderPiece = (ren, actors) => {
+    if (!actors || !actors.length) {
       vtkErrorMacro('No input!');
       return;
     }
 
-    publicAPI.renderPieceStart(ren, actor);
-    publicAPI.renderPieceDraw(ren, actor);
-    publicAPI.renderPieceFinish(ren, actor);
+    publicAPI.renderPieceStart(ren, actors);
+    publicAPI.renderPieceDraw(ren, actors);
+    publicAPI.renderPieceFinish(ren, actors);
   };
 
-  publicAPI.computeBounds = (ren, actor) => {
+  publicAPI.computeBounds = (ren, actors) => {
     if (!publicAPI.getInput()) {
       vtkMath.uninitializeBounds(model.Bounds);
       return;
@@ -1140,29 +1093,229 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     model.bounds = publicAPI.getInput().getBounds();
   };
 
-  publicAPI.updateBufferObjects = (ren, actor) => {
+  publicAPI.updateBufferObjects = (ren, actors) => {
     // Rebuild buffers if needed
-    if (publicAPI.getNeedToRebuildBufferObjects(ren, actor)) {
-      publicAPI.buildBufferObjects(ren, actor);
+    if (publicAPI.getNeedToRebuildBufferObjects(ren, actors)) {
+      publicAPI.buildBufferObjects(ren, actors);
     }
   };
 
-  publicAPI.getNeedToRebuildBufferObjects = (ren, actor) => {
+  publicAPI.getNeedToRebuildBufferObjects = (ren, actors) => {
+    const actorMTimes = actors.map((a) => a.getMTime());
+    const actorPropertyMTimes = actors.map((a) => a.getProperty().getMTime());
+    const latestActorPropertyMTime = Math.max(...actorPropertyMTimes);
+    const latestActorMTime = Math.max(...actorMTimes);
+
     // first do a coarse check
     if (
       model.VBOBuildTime.getMTime() < publicAPI.getMTime() ||
-      model.VBOBuildTime.getMTime() < actor.getMTime() ||
+      model.VBOBuildTime.getMTime() < latestActorMTime() ||
       model.VBOBuildTime.getMTime() < model.renderable.getMTime() ||
-      model.VBOBuildTime.getMTime() < actor.getProperty().getMTime() ||
-      model.VBOBuildTime.getMTime() < model.currentInput.getMTime()
+      model.VBOBuildTime.getMTime() < latestActorPropertyMTime
     ) {
       return true;
     }
+
     return false;
   };
 
-  publicAPI.buildBufferObjects = (ren) => {
-    if (!!model.volumes.length === null) {
+  function rebuildOpacityTransferFunctionTexture(actors) {
+    // Build an array of objects storing the opacity tables
+    // and opacity table lengths
+    const oWidth = 1024;
+
+    // Compute the total length required to store the opacity
+    // transfer functions for each volume.
+    //
+    // The function returns the required size based on the number
+    // of independent components in the image data.
+    const oSizePerVolume = actors.map((actor) => {
+      const vprop = actor.getProperty();
+      const iComps = vprop.getIndependentComponents();
+      const imageData = actor.getMapper().getInputData();
+      const numComp = imageData
+        .getPointData()
+        .getScalars()
+        .getNumberOfComponents();
+      const numIComps = iComps ? numComp : 1;
+
+      return oWidth * 2 * numIComps;
+    });
+
+    // We are making a 2d texture of N x M
+    // N will be the maximum cSize for the displayed volumes
+    // e.g. if all volumes have 1 component, it will be 6 * 1024
+    // if any volume has more components, the width of the texture
+    // will grow. This may not be the best approach?
+    const oSizeMax = Math.max(...oSizePerVolume);
+
+    // We can then allocate the correct size buffer for the color
+    // lookup table
+    const numVolumes = actors.length;
+    const combinedOTableFloat = new Float32Array(oSizeMax * numVolumes);
+
+    let mostRecentMTime = 0;
+
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      const actor = actors[volIdx];
+      const vprop = actor.getProperty();
+      const imageData = actor.getMapper().getInputData();
+      const offset = oSizeMax * volIdx;
+      const ofTable = new Float32Array(combinedOTableFloat, offset, oSizeMax);
+      const tmpTable = new Float32Array(oWidth);
+      const iComps = vprop.getIndependentComponents();
+      const numComp = imageData
+        .getPointData()
+        .getScalars()
+        .getNumberOfComponents();
+      const numIComps = iComps ? numComp : 1;
+
+      for (let c = 0; c < numIComps; ++c) {
+        const ofun = vprop.getScalarOpacity(c);
+        const opacityFactor = 1 / vprop.getScalarOpacityUnitDistance(c);
+
+        const oRange = ofun.getRange();
+        ofun.getTable(oRange[0], oRange[1], oWidth, tmpTable, 1);
+        // adjust for sample distance etc
+        for (let i = 0; i < oWidth; ++i) {
+          ofTable[c * oWidth * 2 + i] =
+            1.0 - (1.0 - tmpTable[i]) ** opacityFactor;
+          ofTable[c * oWidth * 2 + i + oWidth] = ofTable[c * oWidth * 2 + i];
+        }
+      }
+
+      // We will store the modified time for the combined color LUT texture
+      // as the most recently modified volume property
+      mostRecentMTime = Math.max(mostRecentMTime, vprop.getMTime());
+    }
+
+    model.opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
+    model.opacityTexture.setMinificationFilter(Filter.LINEAR);
+    model.opacityTexture.setMagnificationFilter(Filter.LINEAR);
+
+    // use float texture where possible because we really need the resolution
+    // for this table. Errors in low values of opacity accumulate to
+    // visible artifacts. High values of opacity quickly terminate without
+    // artifacts.
+    if (
+      model.openGLRenderWindow.getWebgl2() ||
+      (model.context.getExtension('OES_texture_float') &&
+        model.context.getExtension('OES_texture_float_linear'))
+    ) {
+      model.opacityTexture.create2DFromRaw(
+        oSizeMax,
+        numVolumes,
+        1,
+        VtkDataTypes.FLOAT,
+        combinedOTableFloat
+      );
+    } else {
+      const oTable = new Uint8Array(combinedOTableFloat.length);
+      for (let i = 0; i < oSizeMax; ++i) {
+        oTable[i] = 255.0 * combinedOTableFloat[i];
+      }
+      model.opacityTexture.create2DFromRaw(
+        oSizeMax,
+        numVolumes,
+        1,
+        VtkDataTypes.UNSIGNED_CHAR,
+        oTable
+      );
+    }
+
+    model.opacityTextureMTime = mostRecentMTime;
+  }
+
+  function rebuildColorTransferFunctionTexture(actors) {
+    // Build an array of objects storing the color tables
+    // and color table lengths
+    const cWidth = 1024;
+
+    // Compute the total length required to store the color
+    // transfer functions for each volume.
+    //
+    // The function returns the required size based on the number
+    // of independent components in the image data.
+    const cSizePerVolume = actors.map((actor) => {
+      const vprop = actor.getProperty();
+      const iComps = vprop.getIndependentComponents();
+      const imageData = actor.getMapper().getInputData();
+      const numComp = imageData
+        .getPointData()
+        .getScalars()
+        .getNumberOfComponents();
+      const numIComps = iComps ? numComp : 1;
+
+      return cWidth * 2 * numIComps * 3;
+    });
+
+    // We are making a 2d texture of N x M
+    // N will be the maximum cSize for the displayed volumes
+    // e.g. if all volumes have 1 component, it will be 6 * 1024
+    // if any volume has more components, the width of the texture
+    // will grow. This may not be the best approach?
+    const cSizeMax = Math.max(...cSizePerVolume);
+
+    // We can then allocate the correct size buffer for the color
+    // lookup table
+    const numVolumes = actors.length;
+    const combinedCTable = new Uint8Array(cSizeMax * numVolumes);
+
+    let mostRecentMTime = 0;
+
+    for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
+      const actor = actors[volIdx];
+      const vprop = actor.getProperty();
+      const iComps = vprop.getIndependentComponents();
+      const imageData = actor.getMapper().getInputData();
+      const numComp = imageData
+        .getPointData()
+        .getScalars()
+        .getNumberOfComponents();
+      const numIComps = iComps ? numComp : 1;
+      const offset = cSizeMax * volIdx;
+
+      // Create a new array view on the combined color table buffer
+      const cTable = new Uint8Array(
+        combinedCTable.arrayBufffer,
+        offset,
+        cSizeMax
+      );
+      const tmpTable = new Float32Array(cWidth * 3);
+
+      for (let c = 0; c < numIComps; ++c) {
+        const cfun = vprop.getRGBTransferFunction(c);
+        const cRange = cfun.getRange();
+        cfun.getTable(cRange[0], cRange[1], cWidth, tmpTable, 1);
+        for (let i = 0; i < cWidth * 3; ++i) {
+          cTable[c * cWidth * 6 + i] = 255.0 * tmpTable[i];
+          cTable[c * cWidth * 6 + i + cWidth * 3] = 255.0 * tmpTable[i];
+        }
+      }
+
+      // We will store the modified time for the combined color LUT texture
+      // as the most recently modified volume property
+      mostRecentMTime = Math.max(mostRecentMTime, vprop.getMTime());
+    }
+
+    model.colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
+    model.colorTexture.setMinificationFilter(Filter.LINEAR);
+    model.colorTexture.setMagnificationFilter(Filter.LINEAR);
+
+    // TODO[multivolume]: No idea if this is set correctly yet
+    model.colorTexture.create2DFromRaw(
+      cSizeMax,
+      actors.length,
+      1,
+      VtkDataTypes.UNSIGNED_CHAR,
+      combinedCTable
+    );
+
+    model.colorTextureMTime = mostRecentMTime;
+  }
+
+  publicAPI.buildBufferObjects = (ren, actors) => {
+    if (!!actors.length === null) {
       return;
     }
 
@@ -1182,128 +1335,68 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
     }
 
+    if (!model.colorTextureMTime) {
+      rebuildColorTransferFunctionTexture(actors);
+    }
+
+    if (!model.opacityTextureMTime) {
+      rebuildOpacityTransferFunctionTexture(actors);
+    }
+
     const numVolumes = model.volumes.length;
+    const needToRebuildTexture = {
+      opacity: false,
+      color: false,
+    };
     for (let volIdx = 0; volIdx < numVolumes; volIdx++) {
       const volumeData = model.perVol[volIdx] || {};
-      const scalarTexture =
-        volumeData.scalarTexture || vtkOpenGLTexture.newInstance();
-      const opacityTexture =
-        volumeData.opacityTexture || vtkOpenGLTexture.newInstance();
-      const colorTexture =
-        volumeData.colorTexture || vtkOpenGLTexture.newInstance();
-      let {
-        scalarTextureString,
-        opacityTextureString,
-        colorTextureString,
-      } = volumeData;
-
       const actor = model.volumes[volIdx];
-      const imageData = actor.getMapper().getImageData();
-      const vprop = actor.getProperty();
+      const imageData = actor.getMapper().getInputData();
+      const dims = imageData.getDimensions();
       const numComp = imageData
         .getPointData()
         .getScalars()
         .getNumberOfComponents();
-      const iComps = vprop.getIndependentComponents();
-      const numIComps = iComps ? numComp : 1;
 
-      // rebuild opacity tfun?
-      let toString = `${vprop.getMTime()}`;
-      if (opacityTextureString !== toString) {
-        const oWidth = 1024;
-        const oSize = oWidth * 2 * numIComps;
-        const ofTable = new Float32Array(oSize);
-        const tmpTable = new Float32Array(oWidth);
+      // TODO[multivolume] Stupid question: If we modify these,
+      //  are they modified in the object as well?
+      let { scalarTextureMTime } = volumeData;
+      const {
+        scalarTexture,
+        opacityTextureMTime,
+        colorTextureMTime,
+      } = volumeData;
 
-        for (let c = 0; c < numIComps; ++c) {
-          const ofun = vprop.getScalarOpacity(c);
-          const opacityFactor =
-            model.renderable.getSampleDistance() /
-            vprop.getScalarOpacityUnitDistance(c);
-
-          const oRange = ofun.getRange();
-          ofun.getTable(oRange[0], oRange[1], oWidth, tmpTable, 1);
-          // adjust for sample distance etc
-          for (let i = 0; i < oWidth; ++i) {
-            ofTable[c * oWidth * 2 + i] =
-              1.0 - (1.0 - tmpTable[i]) ** opacityFactor;
-            ofTable[c * oWidth * 2 + i + oWidth] = ofTable[c * oWidth * 2 + i];
-          }
-        }
-
-        opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
-        opacityTexture.setMinificationFilter(Filter.LINEAR);
-        opacityTexture.setMagnificationFilter(Filter.LINEAR);
-
-        // use float texture where possible because we really need the resolution
-        // for this table. Errors in low values of opacity accumulate to
-        // visible artifacts. High values of opacity quickly terminate without
-        // artifacts.
-        if (
-          model.openGLRenderWindow.getWebgl2() ||
-          (model.context.getExtension('OES_texture_float') &&
-            model.context.getExtension('OES_texture_float_linear'))
-        ) {
-          opacityTexture.create2DFromRaw(
-            oWidth,
-            2 * numIComps,
-            1,
-            VtkDataTypes.FLOAT,
-            ofTable
-          );
-        } else {
-          const oTable = new Uint8Array(oSize);
-          for (let i = 0; i < oSize; ++i) {
-            oTable[i] = 255.0 * ofTable[i];
-          }
-          opacityTexture.create2DFromRaw(
-            oWidth,
-            2 * numIComps,
-            1,
-            VtkDataTypes.UNSIGNED_CHAR,
-            oTable
-          );
-        }
-        opacityTextureString = toString;
+      const vprop = actor.getProperty();
+      // If any volumeProperty has been modified more recently than
+      // the last time the combined opacity texture was created,
+      // we need to rebuild the texture
+      if (
+        vprop.getMTime() > opacityTextureMTime &&
+        !needToRebuildTexture.opacity
+      ) {
+        needToRebuildTexture.opacity = true;
       }
 
-      // rebuild color tfun?
-      toString = `${vprop.getMTime()}`;
-      if (colorTextureString !== toString) {
-        const cWidth = 1024;
-        const cSize = cWidth * 2 * numIComps * 3;
-        const cTable = new Uint8Array(cSize);
-        const tmpTable = new Float32Array(cWidth * 3);
-
-        for (let c = 0; c < numIComps; ++c) {
-          const cfun = vprop.getRGBTransferFunction(c);
-          const cRange = cfun.getRange();
-          cfun.getTable(cRange[0], cRange[1], cWidth, tmpTable, 1);
-          for (let i = 0; i < cWidth * 3; ++i) {
-            cTable[c * cWidth * 6 + i] = 255.0 * tmpTable[i];
-            cTable[c * cWidth * 6 + i + cWidth * 3] = 255.0 * tmpTable[i];
-          }
-        }
-
-        colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
-        colorTexture.setMinificationFilter(Filter.LINEAR);
-        colorTexture.setMagnificationFilter(Filter.LINEAR);
-
-        colorTexture.create2DFromRaw(
-          cWidth,
-          2 * numIComps,
-          3,
-          VtkDataTypes.UNSIGNED_CHAR,
-          cTable
-        );
-        colorTextureString = toString;
+      // If any volumeProperty has been modified more recently than
+      // the last time the combined color texture was created,
+      // we need to rebuild the texture
+      //
+      // TODO[multivolume]: Can't we check the vprop.colorTransferFn
+      // instead of just the volume prop?
+      if (vprop.getMTime() > colorTextureMTime && !needToRebuildTexture.color) {
+        needToRebuildTexture.color = true;
       }
 
-      // rebuild the scalarTexture if the data has changed
-      toString = `${imageData.getMTime()}`;
-      if (scalarTextureString !== toString) {
-        // Build the textures
-        const dims = imageData.getDimensions();
+      // If the image data backing the volume actor has been modified
+      // more recently than the last time the combined color texture
+      // was created, we need to rebuild the texture
+      debugger;
+      if (
+        !scalarTexture ||
+        (scalarTextureMTime !== imageData.getMTime() &&
+          !needToRebuildTexture.scalar)
+      ) {
         scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
         scalarTexture.resetFormatAndType();
         scalarTexture.create3DFilterableFromRaw(
@@ -1321,17 +1414,16 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             .getData()
         );
 
-        scalarTextureString = toString;
+        scalarTextureMTime = imageData.getMTime();
       }
+    }
 
-      // TODO: not sure this resetting is necessary since the
-      // variables are pulled from the object originally
-      volumeData.colorTexture = colorTexture;
-      volumeData.colorTextureString = colorTextureString;
-      volumeData.scalarTexture = scalarTexture;
-      volumeData.scalarTextureString = scalarTextureString;
-      volumeData.opacityTexture = opacityTexture;
-      volumeData.opacityTextureString = opacityTextureString;
+    if (needToRebuildTexture.opacity) {
+      rebuildOpacityTransferFunctionTexture(actors);
+    }
+
+    if (needToRebuildTexture.color) {
+      rebuildColorTransferFunctionTexture(actors);
     }
 
     if (!model.tris.getCABO().getElementCount()) {
@@ -1396,6 +1488,8 @@ const DEFAULT_VALUES = {
   displayToView: null,
   avgWindowArea: 0.0,
   avgFrameTime: 0.0,
+
+  volumes: [],
 };
 
 // ----------------------------------------------------------------------------
@@ -1419,6 +1513,9 @@ export function extend(publicAPI, model, initialValues = {}) {
   model.displayToView = []; // Array of mat4
   model.displayToWorld = []; // Array of mat4
 
+  model.opacityTexture = vtkOpenGLTexture.newInstance();
+  model.colorTexture = vtkOpenGLTexture.newInstance();
+
   // Per scene
   model.jitterTexture = vtkOpenGLTexture.newInstance();
   model.jitterTexture.setWrapS(Wrap.REPEAT);
@@ -1426,8 +1523,6 @@ export function extend(publicAPI, model, initialValues = {}) {
   model.framebuffer = vtkOpenGLFramebuffer.newInstance();
 
   // Build VTK API
-  // TODO[multivolume]: Not sure if this is how we want to ingest volumes
-  // Might be better to use the getAncestor thing?
   macro.setGet(publicAPI, model, ['context', 'volumes']);
 
   // Object methods

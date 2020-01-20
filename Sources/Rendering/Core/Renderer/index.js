@@ -586,6 +586,8 @@ const DEFAULT_VALUES = {
   backgroundTexture: null,
 
   pass: 0,
+
+  useMultiVolumeRendering: false,
 };
 
 // ----------------------------------------------------------------------------
@@ -630,6 +632,7 @@ export function extend(publicAPI, model, initialValues = {}) {
     'texturedBackground',
     'useShadows',
     'pass',
+    'useMultiVolumeRendering',
   ]);
   macro.getArray(publicAPI, model, ['actors', 'volumes', 'lights']);
   macro.setGetArray(publicAPI, model, ['background'], 4, 1.0);

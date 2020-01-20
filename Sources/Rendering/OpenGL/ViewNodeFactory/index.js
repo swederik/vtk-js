@@ -15,6 +15,7 @@ import vtkOpenGLStickMapper from 'vtk.js/Sources/Rendering/OpenGL/StickMapper';
 import vtkOpenGLTexture from 'vtk.js/Sources/Rendering/OpenGL/Texture';
 import vtkOpenGLVolume from 'vtk.js/Sources/Rendering/OpenGL/Volume';
 import vtkOpenGLVolumeMapper from 'vtk.js/Sources/Rendering/OpenGL/VolumeMapper';
+import vtkOpenGLMultiVolumeMapper from 'vtk.js/Sources/Rendering/OpenGL/MultiVolumeMapper';
 import vtkViewNodeFactory from 'vtk.js/Sources/Rendering/SceneGraph/ViewNodeFactory';
 
 // ----------------------------------------------------------------------------
@@ -76,6 +77,10 @@ export function extend(publicAPI, model, initialValues = {}) {
   publicAPI.registerOverride(
     'vtkVolumeMapper',
     vtkOpenGLVolumeMapper.newInstance
+  );
+  publicAPI.registerOverride(
+    'vtkOpenGLMultiVolumeMapper',
+    vtkOpenGLMultiVolumeMapper.newInstance
   );
   publicAPI.registerOverride(
     'vtkWidgetRepresentation',
