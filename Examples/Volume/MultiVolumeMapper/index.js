@@ -32,6 +32,7 @@ function createCube() {
 
   const imageData = vtkImageData.newInstance();
   imageData.getPointData().setScalars(pointData);
+  imageData.setDimensions(10, 10, 10);
 
   const actor = vtkVolume.newInstance();
   const mapper = vtkVolumeMapper.newInstance();
@@ -40,9 +41,11 @@ function createCube() {
 
   // create color and opacity transfer functions
   const ofun = vtkPiecewiseFunction.newInstance();
+  ofun.addPoint(0, 0);
   ofun.addPoint(1, 0.5);
 
   const ctfun = vtkColorTransferFunction.newInstance();
+  ctfun.addRGBPoint(0, 0, 0, 0);
   ctfun.addRGBPoint(1, 1, 0, 0);
 
   actor.getProperty().setRGBTransferFunction(0, ctfun);
@@ -81,13 +84,15 @@ greenCube.imageData.setOrigin(0.5, 0, 0);
 objects.push(redCube, blueCube, greenCube);
 
 renderer.addVolume(redCube.actor);
-renderer.addVolume(blueCube.actor);
+// renderer.addVolume(blueCube.actor);
 // renderer.addVolume(greenCube.actor);
 
 renderer.setUseMultiVolumeRendering(true);
 
 renderer.resetCamera();
-renderer.getActiveCamera().elevation(-70);
+// renderer.getActiveCamera().elevation(-70);
+renderer.getActiveCamera().setParallelProjection(true);
+
 renderWindow.render();
 
 // -----------------------------------------------------------

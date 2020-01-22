@@ -1,5 +1,21 @@
 //VTK::System::Dec
 
+/*=========================================================================
+
+  Program:   Visualization Toolkit
+  Module:    vtkVolumeFS.glsl
+
+  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
+  All rights reserved.
+  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.
+
+     This software is distributed WITHOUT ANY WARRANTY; without even
+     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+     PURPOSE.  See the above copyright notice for more information.
+
+=========================================================================*/
+// Template for the polydata mappers fragment shader
+
 // the output of this shader
 //VTK::Output::Dec
 
@@ -16,6 +32,17 @@ varying vec3 vertexVCVSOutput;
 
 // possibly define vtkIndependentComponents
 //VTK::IndependentComponentsOn
+
+// Possibly define vtkImageLabelOutlineOn
+//VTK::ImageLabelOutlineOn
+
+#ifdef vtkImageLabelOutlineOn
+uniform int outlineThickness;
+uniform float vpWidth;
+uniform float vpHeight;
+uniform mat4 DCWCMatrix;
+uniform mat4 vWCtoIDX;
+#endif
 
 // define vtkLightComplexity
 //VTK::LightComplexity
@@ -34,24 +61,24 @@ uniform float goscale0;
 uniform float goshift0;
 uniform float gomin0;
 uniform float gomax0;
-#if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-uniform float goscale1;
-uniform float goshift1;
-uniform float gomin1;
-uniform float gomax1;
-#if vtkNumComponents >= 3
-uniform float goscale2;
-uniform float goshift2;
-uniform float gomin2;
-uniform float gomax2;
-#endif
-#if vtkNumComponents >= 4
-uniform float goscale3;
-uniform float goshift3;
-uniform float gomin3;
-uniform float gomax3;
-#endif
-#endif
+  #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
+  uniform float goscale1;
+  uniform float goshift1;
+  uniform float gomin1;
+  uniform float gomax1;
+    #if vtkNumComponents >= 3
+    uniform float goscale2;
+    uniform float goshift2;
+    uniform float gomin2;
+    uniform float gomax2;
+    #endif
+    #if vtkNumComponents >= 4
+    uniform float goscale3;
+    uniform float goshift3;
+    uniform float gomin3;
+    uniform float gomax3;
+    #endif
+  #endif
 #endif
 
 // camera values
@@ -188,7 +215,8 @@ vec4 computeNormal(vec3 pos, float scalar, vec3 tstep)
   result.y * vPlaneNormal2 +
   result.z * vPlaneNormal4;
 
-  if (result.w > 0.0) {
+  if (result.w > 0.0)
+  {
     result.xyz /= result.w;
   }
   return result;
@@ -305,104 +333,104 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep)
 
   // compute the normal vectors as needed
   #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
-  #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-  mat4 normalMat = computeMat4Normal(posIS, tValue, tstep);
-  vec4 normal0 = normalMat[0];
-  vec4 normal1 = normalMat[1];
-  #if vtkNumComponents > 2
-  vec4 normal2 = normalMat[2];
-  #endif
-  #if vtkNumComponents > 3
-  vec4 normal3 = normalMat[3];
-  #endif
-  #else
-  vec4 normal0 = computeNormal(posIS, tValue.a, tstep);
-  #endif
+    #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
+      mat4 normalMat = computeMat4Normal(posIS, tValue, tstep);
+      vec4 normal0 = normalMat[0];
+      vec4 normal1 = normalMat[1];
+      #if vtkNumComponents > 2
+        vec4 normal2 = normalMat[2];
+      #endif
+      #if vtkNumComponents > 3
+      vec4 normal3 = normalMat[3];
+      #endif
+    #else
+      vec4 normal0 = computeNormal(posIS, tValue.a, tstep);
+    #endif
   #endif
 
   // compute gradient opacity factors as needed
   #if defined(vtkGradientOpacityOn)
-  goFactor.x =
-  computeGradientOpacityFactor(normal0, goscale0, goshift0, gomin0, gomax0);
-  #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-  goFactor.y =
-  computeGradientOpacityFactor(normal1, goscale1, goshift1, gomin1, gomax1);
-  #if vtkNumComponents > 2
-  goFactor.z =
-  computeGradientOpacityFactor(normal2, goscale2, goshift2, gomin2, gomax2);
-  #if vtkNumComponents > 3
-  goFactor.w =
-  computeGradientOpacityFactor(normal3, goscale3, goshift3, gomin3, gomax3);
-  #endif
-  #endif
-  #endif
+    goFactor.x =
+    computeGradientOpacityFactor(normal0, goscale0, goshift0, gomin0, gomax0);
+    #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
+    goFactor.y =
+    computeGradientOpacityFactor(normal1, goscale1, goshift1, gomin1, gomax1);
+      #if vtkNumComponents > 2
+      goFactor.z =
+      computeGradientOpacityFactor(normal2, goscale2, goshift2, gomin2, gomax2);
+        #if vtkNumComponents > 3
+        goFactor.w =
+        computeGradientOpacityFactor(normal3, goscale3, goshift3, gomin3, gomax3);
+        #endif
+      #endif
+    #endif
   #endif
 
   // single component is always independent
   #if vtkNumComponents == 1
-  vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, 0.5));
-  tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, 0.5)).r;
+    vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, 0.5));
+    tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, 0.5)).r;
   #endif
 
   #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-  vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, height0));
-  tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, height0)).r;
-  vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1 + cshift1, height1)).rgb;
-  tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1 + oshift1, height1)).r;
-  #if vtkNumComponents >= 3
-  vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2 + cshift2, height2)).rgb;
-  tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2 + oshift2, height2)).r;
-  #if vtkNumComponents >= 4
-  vec3 tColor3 = mix3*texture2D(ctexture, vec2(tValue.a * cscale3 + cshift3, height3)).rgb;
-  tColor.a += goFactor.w*mix3*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, height3)).r;
-  #endif
-  #endif
+    vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, height0));
+    tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, height0)).r;
+    vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1 + cshift1, height1)).rgb;
+    tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1 + oshift1, height1)).r;
+    #if vtkNumComponents >= 3
+    vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2 + cshift2, height2)).rgb;
+    tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2 + oshift2, height2)).r;
+      #if vtkNumComponents >= 4
+      vec3 tColor3 = mix3*texture2D(ctexture, vec2(tValue.a * cscale3 + cshift3, height3)).rgb;
+      tColor.a += goFactor.w*mix3*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, height3)).r;
+      #endif
+    #endif
 
   #else // then not independent
-  #if vtkNumComponents == 2
-  float lum = tValue.r * cscale0 + cshift0;
-  float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1, 0.5)).r;
-  vec4 tColor = vec4(lum, lum, lum, alpha);
-  #endif
-  #if vtkNumComponents == 3
-  vec4 tColor;
-  tColor.r = tValue.r * cscale0 + cshift0;
-  tColor.g = tValue.g * cscale1 + cshift1;
-  tColor.b = tValue.b * cscale2 + cshift2;
-  tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale0 + oshift0, 0.5)).r;
-  #endif
-  #if vtkNumComponents == 4
-  vec4 tColor;
-  tColor.r = tValue.r * cscale0 + cshift0;
-  tColor.g = tValue.g * cscale1 + cshift1;
-  tColor.b = tValue.b * cscale2 + cshift2;
-  tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, 0.5)).r;
-  #endif
+    #if vtkNumComponents == 2
+    float lum = tValue.r * cscale0 + cshift0;
+    float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1, 0.5)).r;
+    vec4 tColor = vec4(lum, lum, lum, alpha);
+    #endif
+    #if vtkNumComponents == 3
+    vec4 tColor;
+    tColor.r = tValue.r * cscale0 + cshift0;
+    tColor.g = tValue.g * cscale1 + cshift1;
+    tColor.b = tValue.b * cscale2 + cshift2;
+    tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale0 + oshift0, 0.5)).r;
+    #endif
+    #if vtkNumComponents == 4
+    vec4 tColor;
+    tColor.r = tValue.r * cscale0 + cshift0;
+    tColor.g = tValue.g * cscale1 + cshift1;
+    tColor.b = tValue.b * cscale2 + cshift2;
+    tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, 0.5)).r;
+    #endif
   #endif // dependent
 
   // apply lighting if requested as appropriate
   #if vtkLightComplexity > 0
   applyLighting(tColor.rgb, normal0);
-  #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-  applyLighting(tColor1, normal1);
-  #if vtkNumComponents >= 3
-  applyLighting(tColor2, normal2);
-  #if vtkNumComponents >= 4
-  applyLighting(tColor3, normal3);
-  #endif
-  #endif
-  #endif
+    #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
+    applyLighting(tColor1, normal1);
+      #if vtkNumComponents >= 3
+      applyLighting(tColor2, normal2);
+        #if vtkNumComponents >= 4
+        applyLighting(tColor3, normal3);
+        #endif
+      #endif
+    #endif
   #endif
 
   // perform final independent blend as needed
   #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
   tColor.rgb += tColor1;
-  #if vtkNumComponents >= 3
-  tColor.rgb += tColor2;
-  #if vtkNumComponents >= 4
-  tColor.rgb += tColor3;
-  #endif
-  #endif
+    #if vtkNumComponents >= 3
+    tColor.rgb += tColor2;
+      #if vtkNumComponents >= 4
+      tColor.rgb += tColor3;
+      #endif
+    #endif
   #endif
 
   return tColor;

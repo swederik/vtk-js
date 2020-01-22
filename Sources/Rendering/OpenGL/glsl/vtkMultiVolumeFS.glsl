@@ -19,8 +19,6 @@
 
 varying vec3 vertexVCVSOutput;
 
-//VTK::NumVolumes
-
 // first declare the settings from the mapper
 // that impact the code paths in here
 
@@ -28,7 +26,7 @@ varying vec3 vertexVCVSOutput;
 //VTK::NumComponents
 
 // Array listing the number of components per volume
-uniform int numComps[vtkNumVolumes];
+uniform int numCompArr[/* VTK::NumVolumes */];
 
 // possibly define vtkUseTrilinear
 //VTK::TrilinearOn
@@ -42,10 +40,10 @@ uniform int numComps[vtkNumVolumes];
 // define vtkLightComplexity
 //VTK::LightComplexity
 #if vtkLightComplexity > 0
-uniform float vSpecularPower[vtkNumVolumes];
-uniform float vAmbient[vtkNumVolumes];
-uniform float vDiffuse[vtkNumVolumes];
-uniform float vSpecular[vtkNumVolumes];
+uniform float vSpecularPowerArr[/* VTK::NumVolumes */];
+uniform float vAmbientArr[/* VTK::NumVolumes */];
+uniform float vDiffuseArr[/* VTK::NumVolumes */];
+uniform float vSpecularArr[/* VTK::NumVolumes */];
 //VTK::Light::Dec
 #endif
 
@@ -83,36 +81,51 @@ uniform float camFar;
 uniform int cameraParallel;
 
 // values describing the volume geometry
-uniform vec3 vOriginVCArr[vtkNumVolumes];
-uniform vec3 vSpacingArr[vtkNumVolumes];
-uniform ivec3 volumeDimensionsArr[vtkNumVolumes]; // 3d texture dimensions
-uniform vec3 vPlaneNormal0Arr[vtkNumVolumes];
-uniform float vPlaneDistance0Arr[vtkNumVolumes];
-uniform vec3 vPlaneNormal1Arr[vtkNumVolumes];
-uniform float vPlaneDistance1Arr[vtkNumVolumes];
-uniform vec3 vPlaneNormal2Arr[vtkNumVolumes];
-uniform float vPlaneDistance2Arr[vtkNumVolumes];
-uniform vec3 vPlaneNormal3Arr[vtkNumVolumes];
-uniform float vPlaneDistance3Arr[vtkNumVolumes];
-uniform vec3 vPlaneNormal4Arr[vtkNumVolumes];
-uniform float vPlaneDistance4Arr[vtkNumVolumes];
-uniform vec3 vPlaneNormal5Arr[vtkNumVolumes];
-uniform float vPlaneDistance5Arr[vtkNumVolumes];
+uniform vec3 vOriginVCArr[/* VTK::NumVolumes */];
+uniform vec3 vSpacingArr[/* VTK::NumVolumes */];
+uniform ivec3 volumeDimensionsArr[/* VTK::NumVolumes */]; // 3d texture dimensions
+uniform vec3 vPlaneNormal0Arr[/* VTK::NumVolumes */];
+uniform float vPlaneDistance0Arr[/* VTK::NumVolumes */];
+uniform vec3 vPlaneNormal1Arr[/* VTK::NumVolumes */];
+uniform float vPlaneDistance1Arr[/* VTK::NumVolumes */];
+uniform vec3 vPlaneNormal2Arr[/* VTK::NumVolumes */];
+uniform float vPlaneDistance2Arr[/* VTK::NumVolumes */];
+uniform vec3 vPlaneNormal3Arr[/* VTK::NumVolumes */];
+uniform float vPlaneDistance3Arr[/* VTK::NumVolumes */];
+uniform vec3 vPlaneNormal4Arr[/* VTK::NumVolumes */];
+uniform float vPlaneDistance4Arr[/* VTK::NumVolumes */];
+uniform vec3 vPlaneNormal5Arr[/* VTK::NumVolumes */];
+uniform float vPlaneDistance5Arr[/* VTK::NumVolumes */];
 
 // opacity and color textures
-uniform sampler2D otextureArr[vtkNumVolumes];
-uniform float oshift0Arr[vtkNumVolumes];
-uniform float oscale0Arr[vtkNumVolumes];
-uniform sampler2D ctextureArr[vtkNumVolumes];
-uniform float cshift0Arr[vtkNumVolumes];
-uniform float cscale0Arr[vtkNumVolumes];
+uniform sampler2D otexture;
+uniform float oshift0Arr[/* VTK::NumVolumes */];
+uniform float oscale0Arr[/* VTK::NumVolumes */];
+uniform float oshift1Arr[/* VTK::NumVolumes */];
+uniform float oscale1Arr[/* VTK::NumVolumes */];
+uniform float oshift2Arr[/* VTK::NumVolumes */];
+uniform float oscale2Arr[/* VTK::NumVolumes */];
+uniform float oshift3Arr[/* VTK::NumVolumes */];
+uniform float oscale3Arr[/* VTK::NumVolumes */];
+
+uniform sampler2D ctexture;
+uniform float cshift0Arr[/* VTK::NumVolumes */];
+uniform float cscale0Arr[/* VTK::NumVolumes */];
+uniform float cshift1Arr[/* VTK::NumVolumes */];
+uniform float cscale1Arr[/* VTK::NumVolumes */];
+uniform float cshift2Arr[/* VTK::NumVolumes */];
+uniform float cscale2Arr[/* VTK::NumVolumes */];
+uniform float cshift3Arr[/* VTK::NumVolumes */];
+uniform float cscale3Arr[/* VTK::NumVolumes */];
+
+uniform vec3 erikTest;
 
 // jitter texture
 uniform sampler2D jtexture;
 
 // some 3D texture values
 uniform float sampleDistance;
-uniform vec3 vVCToIJKArr[vtkNumVolumes];
+uniform vec3 vVCToIJKArr[/* VTK::NumVolumes */];
 
 // the heights defined below are the locations
 // for the up to four components of the tfuns
@@ -172,10 +185,10 @@ uniform float cscale3;
 //VTK::Light::Dec
 
 //=======================================================================
-uniform highp sampler3D scalarTexture[vtkNumVolumes];
+uniform highp sampler3D scalarTexture;
 
-vec4 getTextureValue(vec3 pos, int volIdx)
-{
+vec4 getTextureValue(vec3 pos) {
+  int numComp = numCompArr[0];
   vec4 tmp = texture(scalarTexture, pos);
   if (numComp == 1) {
     tmp.a = tmp.r;
@@ -189,16 +202,19 @@ vec4 getTextureValue(vec3 pos, int volIdx)
 
 //=======================================================================
 // compute the normal and gradient magnitude for a position
-vec4 computeNormal(vec3 pos, float scalar, vec3 tstep, int volIdx)
-{
+vec4 computeNormal(vec3 pos, float scalar, vec3 tstep, int volIdx) {
+  vec3 vSpacing = vSpacingArr[volIdx];
+  vec3 vPlaneNormal0 = vPlaneNormal0Arr[volIdx];
+  vec3 vPlaneNormal2 = vPlaneNormal2Arr[volIdx];
+  vec3 vPlaneNormal4 = vPlaneNormal4Arr[volIdx];
   vec4 result;
 
-  result.x = getTextureValue(pos + vec3(tstep.x, 0.0, 0.0), volIdx).a - scalar;
-  result.y = getTextureValue(pos + vec3(0.0, tstep.y, 0.0), volIdx).a - scalar;
-  result.z = getTextureValue(pos + vec3(0.0, 0.0, tstep.z), volIdx).a - scalar;
+  result.x = getTextureValue(pos + vec3(tstep.x, 0.0, 0.0)).a - scalar;
+  result.y = getTextureValue(pos + vec3(0.0, tstep.y, 0.0)).a - scalar;
+  result.z = getTextureValue(pos + vec3(0.0, 0.0, tstep.z)).a - scalar;
 
   // divide by spacing
-  result.xyz /= vSpacing;
+  result.xyz /= vSpacing[volIdx];
 
   result.w = length(result.xyz);
 
@@ -217,12 +233,15 @@ vec4 computeNormal(vec3 pos, float scalar, vec3 tstep, int volIdx)
 //=======================================================================
 // compute the normals and gradient magnitudes for a position
 // for independent components
-mat4 computeMat4Normal(vec3 pos, vec4 tValue, vec3 tstep, int volIdx)
-{
+mat4 computeMat4Normal(vec3 pos, vec4 tValue, vec3 tstep, int volIdx) {
   mat4 result;
-  vec4 distX = getTextureValue(pos + vec3(tstep.x, 0.0, 0.0), volIdx) - tValue;
-  vec4 distY = getTextureValue(pos + vec3(0.0, tstep.y, 0.0), volIdx) - tValue;
-  vec4 distZ = getTextureValue(pos + vec3(0.0, 0.0, tstep.z), volIdx) - tValue;
+  vec4 distX = getTextureValue(pos + vec3(tstep.x, 0.0, 0.0)) - tValue;
+  vec4 distY = getTextureValue(pos + vec3(0.0, tstep.y, 0.0)) - tValue;
+  vec4 distZ = getTextureValue(pos + vec3(0.0, 0.0, tstep.z)) - tValue;
+  vec3 vSpacing = vSpacingArr[volIdx];
+  vec3 vPlaneNormal0 = vPlaneNormal0Arr[volIdx];
+  vec3 vPlaneNormal2 = vPlaneNormal2Arr[volIdx];
+  vec3 vPlaneNormal4 = vPlaneNormal4Arr[volIdx];
 
   // divide by spacing
   distX /= vSpacing.x;
@@ -237,16 +256,14 @@ mat4 computeMat4Normal(vec3 pos, vec4 tValue, vec3 tstep, int volIdx)
   result[0].xyz = vec3(distX.r, distY.r, distZ.r);
   result[0].a = length(result[0].xyz);
   result[0].xyz *= rot;
-  if (result[0].w > 0.0)
-  {
+  if (result[0].w > 0.0) {
     result[0].xyz /= result[0].w;
   }
 
   result[1].xyz = vec3(distX.g, distY.g, distZ.g);
   result[1].a = length(result[1].xyz);
   result[1].xyz *= rot;
-  if (result[1].w > 0.0)
-  {
+  if (result[1].w > 0.0) {
     result[1].xyz /= result[1].w;
   }
 
@@ -266,8 +283,7 @@ mat4 computeMat4Normal(vec3 pos, vec4 tValue, vec3 tstep, int volIdx)
   result[3].xyz = vec3(distX.a, distY.a, distZ.a);
   result[3].a = length(result[3].xyz);
   result[3].xyz *= rot;
-  if (result[3].w > 0.0)
-  {
+  if (result[3].w > 0.0) {
     result[3].xyz /= result[3].w;
   }
     #endif
@@ -279,8 +295,7 @@ mat4 computeMat4Normal(vec3 pos, vec4 tValue, vec3 tstep, int volIdx)
 // Given a normal compute the gradient opacity factors
 //
 float computeGradientOpacityFactor(
-vec4 normal, float goscale, float goshift, float gomin, float gomax)
-{
+vec4 normal, float goscale, float goshift, float gomin, float gomax) {
   #if defined(vtkGradientOpacityOn)
   return clamp(normal.a*goscale + goshift, gomin, gomax);
   #else
@@ -301,8 +316,28 @@ void applyLighting(inout vec3 tColor, vec4 normal)
 //=======================================================================
 // Given a texture value compute the color and opacity
 //
-vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep, int volIdx)
-{
+vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep) {
+  int volIdx = 0;
+  float oscale0 = oscale0Arr[volIdx];
+  float oscale1 = oscale1Arr[volIdx];
+  float oscale2 = oscale2Arr[volIdx];
+  float oscale3 = oscale3Arr[volIdx];
+
+  float oshift0 = oshift0Arr[volIdx];
+  float oshift1 = oshift1Arr[volIdx];
+  float oshift2 = oshift2Arr[volIdx];
+  float oshift3 = oshift3Arr[volIdx];
+
+  float cscale0 = cscale0Arr[volIdx];
+  float cscale1 = cscale1Arr[volIdx];
+  float cscale2 = cscale2Arr[volIdx];
+  float cscale3 = cscale3Arr[volIdx];
+
+  float cshift0 = cshift0Arr[volIdx];
+  float cshift1 = cshift1Arr[volIdx];
+  float cshift2 = cshift2Arr[volIdx];
+  float cshift3 = cshift3Arr[volIdx];
+
   // compute the normal and gradient magnitude if needed
   // We compute it as a vec4 if possible otherwise a mat4
   //
@@ -311,7 +346,7 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep, int volIdx)
   // compute the normal vectors as needed
   #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
     //TODO[multivolume] Only add these as necessary
-    // #if defined(vtkNumComponents > 1)
+    #if defined(vtkNumComponents > 1)
       if (numComp > 1) {
         mat4 normalMat = computeMat4Normal(posIS, tValue, tstep, volIdx);
         vec4 normal0 = normalMat[0];
@@ -325,9 +360,9 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep, int volIdx)
       if (numComp > 3) {
         vec4 normal3 = normalMat[3];
       }
-    //#else
+    #else
       vec4 normal0 = computeNormal(posIS, tValue.a, tstep, volIdx);
-    //#endif
+    #endif
   #endif
 
   // compute gradient opacity factors as needed
@@ -348,11 +383,12 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep, int volIdx)
   #endif
   #endif
 
+
   // single component is always independent
-  #if vtkNumComponents == 1
+  //#if vtkNumComponents == 1
   vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, 0.5));
   tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, 0.5)).r;
-  #endif
+  //#endif
 
   #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
   vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, height0));
@@ -416,15 +452,17 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep, int volIdx)
   #endif
   #endif
 
+
   return tColor;
 }
 
 //=======================================================================
 // Apply the specified blend mode operation along the ray's path.
 //
-void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
-{
-  vec3 tstep = 1.0/tdims;
+void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS) {
+  // TODO[multivolume]: tstep should be determined by all volumes, not just the first one
+  vec3 volDims = vec3(volumeDimensionsArr[0]);
+  vec3 tstep = 1.0 / volDims;
 
   // start slightly inside and apply some jitter
   vec3 delta = endIS - posIS;
@@ -432,21 +470,19 @@ void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
   float raySteps = length(delta) / sampleDistanceIS;
 
   // avoid 0.0 jitter
-  float jitter = 0.01 + 0.99*texture2D(jtexture, gl_FragCoord.xy/32.0).r;
+  float jitter = 0.01 + 0.99 * texture2D(jtexture, gl_FragCoord.xy/32.0).r;
   float stepsTraveled = jitter;
 
   // local vars for the loop
   vec4 color = vec4(0.0, 0.0, 0.0, 0.0);
-  vec4 tValue;
-  vec4 tColor;
 
   // Perform initial step at the volume boundary
   // compute the scalar
-  tValue = getTextureValue(posIS, 0);
+  vec4 tValue = getTextureValue(posIS);
 
   // COMPOSITE_BLEND
   // now map through opacity and color
-  tColor = getColorForValue(tValue, posIS, tstep, 0);
+  vec4 tColor = getColorForValue(tValue, posIS, tstep);
 
   // handle very thin volumes
   if (raySteps <= 1.0) {
@@ -457,33 +493,21 @@ void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
 
   tColor.a = 1.0 - pow(1.0 - tColor.a, jitter);
   color = vec4(tColor.rgb*tColor.a, tColor.a);
-  posIS += (jitter*stepIS);
+  posIS += (jitter * stepIS);
 
-  int maxNumSamples = //VTK::MaximumSamplesValue;
+  int maxNumSamples = 1000; //VTK:-:MaximumSamplesValue;
   for (int i = 0; i < maxNumSamples ; ++i) {
-    if (stepsTraveled + 1.0 >= raySteps) {
-      break;
-    }
+    if (stepsTraveled + 1.0 >= raySteps) { break; }
 
     // compute the scalar
-    tValue = getTextureValue(posIS, 0);
+    tValue = getTextureValue(posIS);
 
-    // At each step, map texture value through opacity and color
-    // and then mix colors across volumes
-    vec4 colorAtStep;
-    for (int n = 0; n < vtkNumVolumes ; ++n)
-    {
-      tColor = getColorForValue(tValue, posIS, tstep, n);
+    // now map through opacity and color
+    tColor = getColorForValue(tValue, posIS, tstep);
 
-      float mix = (1.0 - color.a);
+    float mix = (1.0 - color.a);
 
-      colorAtStep = colorAtStep + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
-    }
-
-    // Then mix the color from the step along the ray as usual
-    float mix = (1.0 - colorAtStep.a);
-    color = color + vec4(colorAtStep.rgb*colorAtStep.a, colorAtStep.a)*mix;
-
+    color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
     stepsTraveled++;
     posIS += stepIS;
     if (color.a > 0.99) { color.a = 1.0; break; }
@@ -493,10 +517,10 @@ void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
     posIS = endIS;
 
     // compute the scalar
-    tValue = getTextureValue(posIS, 0);
+    tValue = getTextureValue(posIS);
 
     // now map through opacity and color
-    tColor = getColorForValue(tValue, posIS, tstep, 0);
+    tColor = getColorForValue(tValue, posIS, tstep);
     tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps - stepsTraveled);
 
     float mix = (1.0 - color.a);
@@ -515,11 +539,15 @@ vec3 planeDir, float planeDist,
 inout vec2 tbounds, vec3 vPlaneX, vec3 vPlaneY,
 float vSize1, float vSize2)
 {
+  int n = 0;
+  vec3 vOriginVC = vOriginVCArr[n];
+
   float result = dot(rayDir, planeDir);
   if (result == 0.0)
   {
     return;
   }
+
   result = -1.0 * (dot(rayPos, planeDir) + planeDist) / result;
   vec3 xposVC = rayPos + rayDir*result;
   vec3 vxpos = xposVC - vOriginVC;
@@ -552,41 +580,46 @@ float vSize1, float vSize2)
 // - optionally depth buffer values
 // - far clipping plane
 // compute the start/end distances of the ray we need to cast
-vec2 computeRayDistances(vec3 rayDir, vec3 tdims)
-{
+vec2 computeRayDistances(vec3 rayDir) {
   vec2 dists = vec2(100.0 * camFar, -1.0);
 
-  for (int n = 0; n < vtkNumVolumes ; ++n) {
-    vec3 vPlaneNormal0 = vPlaneNormal0Arr[n];
-    vec3 vPlaneNormal1 = vPlaneNormal1Arr[n];
-    vec3 vPlaneNormal2 = vPlaneNormal2Arr[n];
-    vec3 vPlaneNormal3 = vPlaneNormal3Arr[n];
-    vec3 vPlaneNormal4 = vPlaneNormal4Arr[n];
-    vec3 vPlaneNormal5 = vPlaneNormal5Arr[n];
-    vec3 vSpacing = vSpacingArr[n];
+  int n = 0;
+  vec3 vPlaneNormal0 = vPlaneNormal0Arr[n];
+  vec3 vPlaneNormal1 = vPlaneNormal1Arr[n];
+  vec3 vPlaneNormal2 = vPlaneNormal2Arr[n];
+  vec3 vPlaneNormal3 = vPlaneNormal3Arr[n];
+  vec3 vPlaneNormal4 = vPlaneNormal4Arr[n];
+  vec3 vPlaneNormal5 = vPlaneNormal5Arr[n];
+  float vPlaneDistance0 = vPlaneDistance0Arr[n];
+  float vPlaneDistance1 = vPlaneDistance1Arr[n];
+  float vPlaneDistance2 = vPlaneDistance2Arr[n];
+  float vPlaneDistance3 = vPlaneDistance3Arr[n];
+  float vPlaneDistance4 = vPlaneDistance4Arr[n];
+  float vPlaneDistance5 = vPlaneDistance5Arr[n];
+  vec3 vSpacing = vSpacingArr[n];
+  vec3 vOriginVC = vOriginVCArr[n];
+  vec3 volDims = vec3(volumeDimensionsArr[n]);
+  vec3 vSize = vSpacing * (volDims - 1.0);
 
-    vec3 vSize = vSpacing*(tdims - 1.0);
-
-    // all this is in View Coordinates
-    getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-    vPlaneNormal0, vPlaneDistance0, dists, vPlaneNormal2, vPlaneNormal4,
-    vSize.y, vSize.z);
-    getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-    vPlaneNormal1, vPlaneDistance1, dists, vPlaneNormal2, vPlaneNormal4,
-    vSize.y, vSize.z);
-    getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-    vPlaneNormal2, vPlaneDistance2, dists, vPlaneNormal0, vPlaneNormal4,
-    vSize.x, vSize.z);
-    getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-    vPlaneNormal3, vPlaneDistance3, dists, vPlaneNormal0, vPlaneNormal4,
-    vSize.x, vSize.z);
-    getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-    vPlaneNormal4, vPlaneDistance4, dists, vPlaneNormal0, vPlaneNormal2,
-    vSize.x, vSize.y);
-    getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-    vPlaneNormal5, vPlaneDistance5, dists, vPlaneNormal0, vPlaneNormal2,
-    vSize.x, vSize.y);
-  }
+  // all this is in View Coordinates
+  getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
+  vPlaneNormal0, vPlaneDistance0, dists, vPlaneNormal2, vPlaneNormal4,
+  vSize.y, vSize.z);
+  getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
+  vPlaneNormal1, vPlaneDistance1, dists, vPlaneNormal2, vPlaneNormal4,
+  vSize.y, vSize.z);
+  getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
+  vPlaneNormal2, vPlaneDistance2, dists, vPlaneNormal0, vPlaneNormal4,
+  vSize.x, vSize.z);
+  getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
+  vPlaneNormal3, vPlaneDistance3, dists, vPlaneNormal0, vPlaneNormal4,
+  vSize.x, vSize.z);
+  getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
+  vPlaneNormal4, vPlaneDistance4, dists, vPlaneNormal0, vPlaneNormal2,
+  vSize.x, vSize.y);
+  getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
+  vPlaneNormal5, vPlaneDistance5, dists, vPlaneNormal0, vPlaneNormal2,
+  vSize.x, vSize.y);
 
   // do not go behind front clipping plane
   dists.x = max(0.0,dists.x);
@@ -608,49 +641,43 @@ vec2 computeRayDistances(vec3 rayDir, vec3 tdims)
 //
 void computeIndexSpaceValues(out vec3 pos, out vec3 endPos, out float sampleDistanceIS, vec3 rayDir, vec2 dists)
 {
-  // TODO[multivolume]: Does GLSL have Infinity?
-  float sampleDistanceIS = 1000;
+  int n = 0;
+  vec3 vPlaneNormal0 = vPlaneNormal0Arr[n];
+  vec3 vPlaneNormal2 = vPlaneNormal2Arr[n];
+  vec3 vPlaneNormal4 = vPlaneNormal4Arr[n];
+  vec3 vOriginVC = vOriginVCArr[n];
+  vec3 vVCToIJK = vVCToIJKArr[n];
 
-  for (int n = 0; n < vtkNumVolumes ; ++n) {
-    vec3 vPlaneNormal0 = vPlaneNormal0Arr[n];
-    vec3 vPlaneNormal1 = vPlaneNormal1Arr[n];
-    vec3 vPlaneNormal2 = vPlaneNormal2Arr[n];
-    vec3 vPlaneNormal3 = vPlaneNormal3Arr[n];
-    vec3 vPlaneNormal4 = vPlaneNormal4Arr[n];
-    vec3 vPlaneNormal5 = vPlaneNormal5Arr[n];
-    vec3 vOriginVC = vOriginVCArr[n];
-    vec3 vVCToIJK = vVCToIJKArr[n];
+  // compute starting and ending values in volume space
+  pos = vertexVCVSOutput + dists.x*rayDir;
+  pos = pos - vOriginVC;
+  // convert to volume basis and origin
+  pos = vec3(
+  dot(pos, vPlaneNormal0),
+  dot(pos, vPlaneNormal2),
+  dot(pos, vPlaneNormal4));
 
-    // compute starting and ending values in volume space
-    pos = vertexVCVSOutput + dists.x*rayDir;
-    pos = pos - vOriginVC;
-    // convert to volume basis and origin
-    pos = vec3(
-      dot(pos, vPlaneNormal0),
-      dot(pos, vPlaneNormal2),
-      dot(pos, vPlaneNormal4));
+  endPos = vertexVCVSOutput + dists.y*rayDir;
+  endPos = endPos - vOriginVC;
+  endPos = vec3(
+  dot(endPos, vPlaneNormal0),
+  dot(endPos, vPlaneNormal2),
+  dot(endPos, vPlaneNormal4));
 
-    endPos = vertexVCVSOutput + dists.y*rayDir;
-    endPos = endPos - vOriginVC;
-    endPos = vec3(
-      dot(endPos, vPlaneNormal0),
-      dot(endPos, vPlaneNormal2),
-      dot(endPos, vPlaneNormal4));
+  float delta = length(endPos - pos);
 
-    float delta = length(endPos - pos);
+  pos *= vVCToIJK;
+  endPos *= vVCToIJK;
 
-    pos *= vVCToIJK;
-    endPos *= vVCToIJK;
-
-    float delta2 = length(endPos - pos);
-
-    sampleDistanceIS = min(sampleDistanceIS, sampleDistance*delta2/delta);
-  }
+  float delta2 = length(endPos - pos);
+  sampleDistanceIS = sampleDistance*delta2/delta;
 }
 
-void main()
-{
+void main() {
   vec3 rayDirVC;
+
+  gl_FragData[0] = vec4(erikTest[0], erikTest[1], erikTest[2], 1.0);
+  return;
 
   if (cameraParallel == 1) {
     // Camera is parallel, so the rayDir is just the direction of the camera.
@@ -660,16 +687,17 @@ void main()
     rayDirVC = normalize(vertexVCVSOutput);
   }
 
-  vec3 tdims = vec3(volumeDimensions);
-
   // compute the start and end points for the ray
-  vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC, tdims);
+  vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC);
 
   // do we need to composite? aka does the ray have any length
   // If not, bail out early
   if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
     discard;
   }
+
+  gl_FragData[0] = vec4(0.0, 0.0, 1.0, 1.0);
+  return;
 
   // IS = Index Space
   vec3 posIS;
@@ -678,5 +706,5 @@ void main()
   computeIndexSpaceValues(posIS, endIS, sampleDistanceIS, rayDirVC, rayStartEndDistancesVC);
 
   // Perform the blending operation along the ray
-  applyBlend(posIS, endIS, sampleDistanceIS, tdims);
+  applyBlend(posIS, endIS, sampleDistanceIS);
 }

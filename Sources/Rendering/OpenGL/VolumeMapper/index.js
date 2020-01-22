@@ -1,3 +1,4 @@
+/* eslint no-debugger: 0 */
 import macro from 'vtk.js/Sources/macro';
 import { vec3, mat3, mat4 } from 'gl-matrix';
 // import vtkBoundingBox       from 'vtk.js/Sources/Common/DataModel/BoundingBox';
@@ -483,6 +484,7 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
 
     const ext = model.currentInput.getExtent();
     const spc = model.currentInput.getSpacing();
+
     const vsize = vec3.create();
     vec3.set(
       vsize,
@@ -512,6 +514,12 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
       model.idxNormalMatrix,
       model.currentInput.getDirection()
     );
+
+    console.warn(`i2wmat4`, i2wmat4);
+    console.warn(`idxToView`, model.idxToView);
+    console.warn(`idxNormalMatrix`, model.idxNormalMatrix);
+    console.warn(`ext`, ext);
+    console.warn('actMats', actMats.normalMatrix);
 
     const maxSamples =
       vec3.length(vsize) / model.renderable.getSampleDistance();
@@ -930,6 +938,89 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
     model.jitterTexture.deactivate();
   };
 
+  function getProgramInfo(gl, program) {
+    const result = {
+      attributes: [],
+      uniforms: [],
+      attributeCount: 0,
+      uniformCount: 0,
+    };
+
+    const activeUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+
+    const activeAttributes = gl.getProgramParameter(
+      program,
+      gl.ACTIVE_ATTRIBUTES
+    );
+
+    // Taken from the WebGl spec:
+    // http://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14
+    const enums = {
+      0x8b50: 'FLOAT_VEC2',
+      0x8b51: 'FLOAT_VEC3',
+      0x8b52: 'FLOAT_VEC4',
+      0x8b53: 'INT_VEC2',
+      0x8b54: 'INT_VEC3',
+      0x8b55: 'INT_VEC4',
+      0x8b56: 'BOOL',
+      0x8b57: 'BOOL_VEC2',
+      0x8b58: 'BOOL_VEC3',
+      0x8b59: 'BOOL_VEC4',
+      0x8b5a: 'FLOAT_MAT2',
+      0x8b5b: 'FLOAT_MAT3',
+      0x8b5c: 'FLOAT_MAT4',
+      0x8b5e: 'SAMPLER_2D',
+      0x8b60: 'SAMPLER_CUBE',
+      0x1400: 'BYTE',
+      0x1401: 'UNSIGNED_BYTE',
+      0x1402: 'SHORT',
+      0x1403: 'UNSIGNED_SHORT',
+      0x1404: 'INT',
+      0x1405: 'UNSIGNED_INT',
+      0x1406: 'FLOAT',
+    };
+
+    // Loop through active uniforms
+    for (let i = 0; i < activeUniforms; i++) {
+      const uniform = gl.getActiveUniform(program, i);
+      const location = gl.getUniformLocation(program, uniform.name);
+      const value = gl.getUniform(program, location);
+      uniform.typeName = enums[uniform.type];
+      result.uniforms.push({
+        name: uniform.name,
+        typeName: uniform.typeName,
+        value,
+        location,
+        size: uniform.size,
+      });
+      result.uniformCount += uniform.size;
+    }
+
+    // Loop through active attributes
+    for (let i = 0; i < activeAttributes; i++) {
+      const attribute = gl.getActiveAttrib(program, i);
+      attribute.typeName = enums[attribute.type];
+      result.attributes.push(attribute);
+      result.attributeCount += attribute.size;
+    }
+
+    result.uniforms.sort((a, b) => {
+      const nameA = a.name.toUpperCase();
+      const nameB = b.name.toUpperCase();
+      if (nameA > nameB) {
+        return -1;
+      }
+
+      if (nameB > nameA) {
+        return 1;
+      }
+
+      return 0;
+    });
+
+    return result;
+  }
+
   publicAPI.renderPieceFinish = (ren, actor) => {
     // if we have a zbuffer texture then deactivate it
     if (model.zBufferTexture !== null) {
@@ -1020,6 +1111,12 @@ function vtkOpenGLVolumeMapper(publicAPI, model) {
         gl.ONE_MINUS_SRC_ALPHA
       );
     }
+
+    const gl = model.context;
+    const program = model.lastBoundBO.getProgram().getHandle();
+
+    console.warn(getProgramInfo(gl, program));
+    console.warn(JSON.stringify(getProgramInfo(gl, program), null, 2));
   };
 
   publicAPI.renderPiece = (ren, actor) => {

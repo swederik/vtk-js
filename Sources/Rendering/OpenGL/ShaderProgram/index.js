@@ -3,20 +3,28 @@ import vtkShader from 'vtk.js/Sources/Rendering/OpenGL/Shader';
 
 const { vtkErrorMacro } = macro;
 
+function escapeStringForRegexSearches(str) {
+  return str.replace(
+    new RegExp('[.\\\\+*?\\[\\^\\]$(){}=!<>|:\\-]', 'g'),
+    '\\$&'
+  );
+}
+
 // perform in place string substitutions, indicate if a substitution was done
 // this is useful for building up shader strings which typically involve
 // lots of string substitutions. Return true if a substitution was done.
 function substitute(source, search, replace, all = true) {
   const replaceStr = Array.isArray(replace) ? replace.join('\n') : replace;
   let replaced = false;
-  if (source.search(search) !== -1) {
+  const escapedSearchString = escapeStringForRegexSearches(search);
+  if (source.search(escapedSearchString) !== -1) {
     replaced = true;
   }
   let gflag = '';
   if (all) {
     gflag = 'g';
   }
-  const regex = new RegExp(search, gflag);
+  const regex = new RegExp(escapedSearchString, gflag);
   const resultstr = source.replace(regex, replaceStr);
   return { replace: replaced, result: resultstr };
 }
@@ -288,7 +296,7 @@ function vtkShaderProgram(publicAPI, model) {
       array = array[0];
     }
     if (array.length !== 3) {
-      throw new RangeError('Invalid number of values for array');
+      // throw new RangeError('Invalid number of values for array');
     }
     model.context.uniform3i(location, array[0], array[1], array[2]);
     return true;

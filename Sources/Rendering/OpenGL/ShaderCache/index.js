@@ -89,7 +89,7 @@ function vtkShaderCache(publicAPI, model) {
         .result;
       nFSSource = vtkShaderProgram.substitute(
         nFSSource,
-        'gl_FragData\\[0\\]',
+        'gl_FragData[0]',
         'fragOutput0'
       ).result;
       nFSSource = vtkShaderProgram.substitute(

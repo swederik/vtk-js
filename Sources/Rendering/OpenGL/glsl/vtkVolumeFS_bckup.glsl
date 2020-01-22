@@ -1,5 +1,21 @@
 //VTK::System::Dec
 
+/*=========================================================================
+
+  Program:   Visualization Toolkit
+  Module:    vtkVolumeFS.glsl
+
+  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
+  All rights reserved.
+  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.
+
+     This software is distributed WITHOUT ANY WARRANTY; without even
+     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+     PURPOSE.  See the above copyright notice for more information.
+
+=========================================================================*/
+// Template for the polydata mappers fragment shader
+
 // the output of this shader
 //VTK::Output::Dec
 
@@ -16,6 +32,20 @@ varying vec3 vertexVCVSOutput;
 
 // possibly define vtkIndependentComponents
 //VTK::IndependentComponentsOn
+
+// Define the blend mode to use
+#define vtkBlendMode //VTK::BlendMode
+
+// Possibly define vtkImageLabelOutlineOn
+//VTK::ImageLabelOutlineOn
+
+#ifdef vtkImageLabelOutlineOn
+uniform int outlineThickness;
+uniform float vpWidth;
+uniform float vpHeight;
+uniform mat4 DCWCMatrix;
+uniform mat4 vWCtoIDX;
+#endif
 
 // define vtkLightComplexity
 //VTK::LightComplexity
@@ -150,6 +180,9 @@ uniform float cscale3;
 //VTK::Light::Dec
 
 //=======================================================================
+// Webgl2 specific version of functions
+#if __VERSION__ == 300
+
 uniform highp sampler3D texture1;
 
 vec4 getTextureValue(vec3 pos)
@@ -166,6 +199,66 @@ vec4 getTextureValue(vec3 pos)
   #endif
   return tmp;
 }
+
+  //=======================================================================
+  // WebGL1 specific version of functions
+  #else
+
+uniform sampler2D texture1;
+
+uniform float texWidth;
+uniform float texHeight;
+uniform int xreps;
+uniform float xstride;
+uniform float ystride;
+
+// if computing triliear values from multiple z slices
+#ifdef vtkTriliearOn
+vec4 getTextureValue(vec3 ijk)
+{
+  float zoff = 1.0/float(volumeDimensions.z);
+  vec4 val1 = getOneTextureValue(ijk);
+  vec4 val2 = getOneTextureValue(vec3(ijk.xy, ijk.z + zoff));
+
+  float indexZ = float(volumeDimensions)*ijk.z;
+  float zmix =  indexZ - floor(indexZ);
+
+  return mix(val1, val2, zmix);
+}
+
+vec4 getOneTextureValue(vec3 ijk)
+#else // nearest or fast linear
+vec4 getTextureValue(vec3 ijk)
+#endif
+{
+  vec3 tdims = vec3(volumeDimensions);
+
+  int z = int(ijk.z * tdims.z);
+  int yz = z / xreps;
+  int xz = z - yz*xreps;
+
+  float ni = (ijk.x + float(xz)) * tdims.x/xstride;
+  float nj = (ijk.y + float(yz)) * tdims.y/ystride;
+
+  vec2 tpos = vec2(ni/texWidth, nj/texHeight);
+
+  vec4 tmp = texture2D(texture1, tpos);
+
+  #if vtkNumComponents == 1
+  tmp.a = tmp.r;
+  #endif
+  #if vtkNumComponents == 2
+  tmp.g = tmp.a;
+  #endif
+  #if vtkNumComponents == 3
+  tmp.a = length(tmp.rgb);
+  #endif
+  return tmp;
+}
+
+  // End of Webgl1 specific code
+  //=======================================================================
+  #endif
 
 //=======================================================================
 // compute the normal and gradient magnitude for a position
@@ -188,7 +281,8 @@ vec4 computeNormal(vec3 pos, float scalar, vec3 tstep)
   result.y * vPlaneNormal2 +
   result.z * vPlaneNormal4;
 
-  if (result.w > 0.0) {
+  if (result.w > 0.0)
+  {
     result.xyz /= result.w;
   }
   return result;
@@ -298,6 +392,53 @@ void applyLighting(inout vec3 tColor, vec4 normal)
 //
 vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep)
 {
+  #ifdef vtkImageLabelOutlineOn
+  vec3 centerPosIS = fragCoordToIndexSpace(gl_FragCoord); // pos in texture space
+  vec4 centerValue = getTextureValue(centerPosIS);
+  bool pixelOnBorder = false;
+  vec4 tColor = texture2D(ctexture, vec2(centerValue.r * cscale0 + cshift0, 0.5));
+
+  // Get alpha of segment from opacity function.
+  tColor.a = texture2D(otexture, vec2(centerValue.r * oscale0 + oshift0, 0.5)).r;
+
+  // Only perform outline check on fragments rendering voxels that aren't invisible.
+  // Saves a bunch of needless checks on the background.
+  // TODO define epsilon when building shader?
+  if (float(tColor.a) > 0.01) {
+    for (int i = -outlineThickness; i <= outlineThickness; i++) {
+      for (int j = -outlineThickness; j <= outlineThickness; j++) {
+        if (i == 0 || j == 0) {
+          continue;
+        }
+
+        vec4 neighborPixelCoord = vec4(gl_FragCoord.x + float(i),
+        gl_FragCoord.y + float(j),
+        gl_FragCoord.z, gl_FragCoord.w);
+
+        vec3 neighborPosIS = fragCoordToIndexSpace(neighborPixelCoord);
+        vec4 value = getTextureValue(neighborPosIS);
+
+        // If any of my neighbours are not the same value as I
+        // am, this means I am on the border of the segment.
+        // We can break the loops
+        if (any(notEqual(value, centerValue))) {
+          pixelOnBorder = true;
+          break;
+        }
+      }
+
+      if (pixelOnBorder == true) {
+        break;
+      }
+    }
+
+    // If I am on the border, I am displayed at full opacity
+    if (pixelOnBorder == true) {
+      tColor.a = 1.0;
+    }
+  }
+
+    #else
   // compute the normal and gradient magnitude if needed
   // We compute it as a vec4 if possible otherwise a mat4
   //
@@ -359,6 +500,7 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep)
   #endif
 
   #else // then not independent
+
   #if vtkNumComponents == 2
   float lum = tValue.r * cscale0 + cshift0;
   float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1, 0.5)).r;
@@ -405,6 +547,14 @@ vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep)
   #endif
   #endif
 
+  #endif
+
+
+
+
+
+
+
   return tColor;
 }
 
@@ -431,16 +581,24 @@ void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
   vec4 tValue;
   vec4 tColor;
 
+  // if we have less than one step then pick the middle point
+  // as our value
+  // if (raySteps <= 1.0)
+  // {
+  //   posIS = (posIS + endIS)*0.5;
+  // }
+
   // Perform initial step at the volume boundary
   // compute the scalar
   tValue = getTextureValue(posIS);
 
-  // COMPOSITE_BLEND
+  #if vtkBlendMode == 0 // COMPOSITE_BLEND
   // now map through opacity and color
   tColor = getColorForValue(tValue, posIS, tstep);
 
   // handle very thin volumes
-  if (raySteps <= 1.0) {
+  if (raySteps <= 1.0)
+  {
     tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
     gl_FragData[0] = tColor;
     return;
@@ -462,13 +620,18 @@ void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
 
     float mix = (1.0 - color.a);
 
+    // this line should not be needed but nvidia seems to not handle
+    // the break correctly on windows/chrome 58 angle
+    //mix = mix * sign(max(raySteps - stepsTraveled - 1.0, 0.0));
+
     color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
     stepsTraveled++;
     posIS += stepIS;
     if (color.a > 0.99) { color.a = 1.0; break; }
   }
 
-  if (color.a < 0.99 && (raySteps - stepsTraveled) > 0.0) {
+  if (color.a < 0.99 && (raySteps - stepsTraveled) > 0.0)
+  {
     posIS = endIS;
 
     // compute the scalar
@@ -483,6 +646,140 @@ void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
   }
 
   gl_FragData[0] = vec4(color.rgb/color.a, color.a);
+  #endif
+  #if vtkBlendMode == 1 || vtkBlendMode == 2
+  // MAXIMUM_INTENSITY_BLEND || MINIMUM_INTENSITY_BLEND
+  // Find maximum/minimum intensity along the ray.
+
+  // Define the operation we will use (min or max)
+  #if vtkBlendMode == 1
+  #define OP max
+  #else
+  #define OP min
+  #endif
+
+  // If the clipping range is shorter than the sample distance
+  // we can skip the sampling loop along the ray.
+  if (raySteps <= 1.0)
+  {
+    gl_FragData[0] = getColorForValue(tValue, posIS, tstep);
+    return;
+  }
+
+  vec4 value = tValue;
+  posIS += (jitter*stepIS);
+
+  // Sample along the ray until MaximumSamplesValue,
+  // ending slightly inside the total distance
+  for (int i = 0; i < //VTK::MaximumSamplesValue ; ++i)
+  {
+    // If we have reached the last step, break
+    if (stepsTraveled + 1.0 >= raySteps) { break; }
+
+    // compute the scalar
+    tValue = getTextureValue(posIS);
+
+    // Update the maximum value if necessary
+    value = OP(tValue, value);
+
+    // Otherwise, continue along the ray
+    stepsTraveled++;
+    posIS += stepIS;
+  }
+
+  // Perform the last step along the ray using the
+  // residual distance
+  posIS = endIS;
+  tValue = getTextureValue(posIS);
+  value = OP(tValue, value);
+
+  // Now map through opacity and color
+  gl_FragData[0] = getColorForValue(value, posIS, tstep);
+  #endif
+  #if vtkBlendMode == 3 //AVERAGE_INTENSITY_BLEND
+  vec4 averageIPScalarRangeMin = vec4 (
+  //VTK::AverageIPScalarRangeMin,
+  //VTK::AverageIPScalarRangeMin,
+  //VTK::AverageIPScalarRangeMin,
+  1.0);
+  vec4 averageIPScalarRangeMax = vec4(
+  //VTK::AverageIPScalarRangeMax,
+  //VTK::AverageIPScalarRangeMax,
+  //VTK::AverageIPScalarRangeMax,
+  1.0);
+
+  vec4 sum = vec4(0.);
+
+  averageIPScalarRangeMin.a = tValue.a;
+  averageIPScalarRangeMax.a = tValue.a;
+
+  if (all(greaterThanEqual(tValue, averageIPScalarRangeMin)) &&
+  all(lessThanEqual(tValue, averageIPScalarRangeMax))) {
+    sum += tValue;
+  }
+
+  if (raySteps <= 1.0) {
+    gl_FragData[0] = getColorForValue(sum, posIS, tstep);
+    return;
+  }
+
+  posIS += (jitter*stepIS);
+
+  // Sample along the ray until MaximumSamplesValue,
+  // ending slightly inside the total distance
+  for (int i = 0; i < //VTK::MaximumSamplesValue ; ++i)
+  {
+    // If we have reached the last step, break
+    if (stepsTraveled + 1.0 >= raySteps) { break; }
+
+    // compute the scalar
+    tValue = getTextureValue(posIS);
+
+    // One can control the scalar range by setting the AverageIPScalarRange to disregard scalar values, not in the range of interest, from the average computation.
+    // Notes:
+    // - We are comparing all values in the texture to see if any of them
+    //   are outside of the scalar range. In the future we might want to allow
+    //   scalar ranges for each component.
+    // - We are setting the alpha channel for averageIPScalarRangeMin and
+    //   averageIPScalarRangeMax so that we do not trigger this 'continue'
+    //   based on the alpha channel comparison.
+    // - There might be a better way to do this. I'm not sure if there is an
+    //   equivalent of 'any' which only operates on RGB, though I suppose
+    //   we could write an 'anyRGB' function and see if that is faster.
+    averageIPScalarRangeMin.a = tValue.a;
+    averageIPScalarRangeMax.a = tValue.a;
+    if (any(lessThan(tValue, averageIPScalarRangeMin)) ||
+    any(greaterThan(tValue, averageIPScalarRangeMax))) {
+      continue;
+    }
+
+    // Sum the values across each step in the path
+    sum += tValue;
+
+    // Otherwise, continue along the ray
+    stepsTraveled++;
+    posIS += stepIS;
+  }
+
+  // Perform the last step along the ray using the
+  // residual distance
+  posIS = endIS;
+
+  // compute the scalar
+  tValue = getTextureValue(posIS);
+
+  // One can control the scalar range by setting the AverageIPScalarRange to disregard scalar values, not in the range of interest, from the average computation
+  if (all(greaterThanEqual(tValue, averageIPScalarRangeMin)) &&
+  all(lessThanEqual(tValue, averageIPScalarRangeMax))) {
+    sum += tValue;
+
+    stepsTraveled++;
+  }
+
+  sum /= vec4(stepsTraveled, stepsTraveled, stepsTraveled, 1.0);
+
+  gl_FragData[0] = getColorForValue(sum, posIS, tstep);
+  #endif
 }
 
 //=======================================================================
@@ -602,10 +899,13 @@ void computeIndexSpaceValues(out vec3 pos, out vec3 endPos, out float sampleDist
   sampleDistanceIS = sampleDistance*delta2/delta;
 }
 
-void main() {
+void main()
+{
+
   vec3 rayDirVC;
 
-  if (cameraParallel == 1) {
+  if (cameraParallel == 1)
+  {
     // Camera is parallel, so the rayDir is just the direction of the camera.
     rayDirVC = vec3(0.0, 0.0, -1.0);
   } else {
@@ -620,7 +920,8 @@ void main() {
 
   // do we need to composite? aka does the ray have any length
   // If not, bail out early
-  if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
+  if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x)
+  {
     discard;
   }
 

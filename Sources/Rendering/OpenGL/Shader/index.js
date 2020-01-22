@@ -49,9 +49,21 @@ function vtkShader(publicAPI, model) {
       model.handle,
       model.context.COMPILE_STATUS
     );
+
+    function logWithLineNumbers(string) {
+      let lineNumber = 1;
+      string.split('\n').forEach((line) => {
+        console.log(lineNumber, line);
+        lineNumber += 1;
+      });
+    }
     if (!isCompiled) {
       const lastError = model.context.getShaderInfoLog(model.handle);
-      vtkErrorMacro(`Error compiling shader '${model.source}': ${lastError}`);
+      vtkErrorMacro(
+        `Error compiling shader '${logWithLineNumbers(
+          model.source
+        )}': ${lastError}`
+      );
       model.context.deleteShader(model.handle);
       model.handle = 0;
       return false;
