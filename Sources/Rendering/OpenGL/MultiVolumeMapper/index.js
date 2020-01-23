@@ -772,8 +772,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const min = distances[0].vertex;
     const max = distances[distances.length - 1].vertex;
 
-    console.log(min, max);
-
     return [min, max];
   }
 
@@ -827,8 +825,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       {
         // vec3 tstep = 1.0/tdims;
         
-        vec3 posVC = rayStartEndDistancesVC.x * rayDirVC;
-        vec3 endVC = rayStartEndDistancesVC.y * rayDirVC;
+        vec3 posVC = vertexVCVSOutput + rayStartEndDistancesVC.x * rayDirVC;
+        vec3 endVC = vertexVCVSOutput + rayStartEndDistancesVC.y * rayDirVC;
         
         vec3 lenPos1 = (worldToViewMatrix * vec4(0.0, 0.0, 0.0, 0.0)).xyz; 
         vec3 lenPos2 = (worldToViewMatrix * vec4(smallestVoxelSize, 0.0, 0.0, 0.0)).xyz;
@@ -869,7 +867,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         if (raySteps <= 1.0) {
           tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
           gl_FragData[0] = tColor;
-          gl_FragData[0] = vec4(0.0, 1.0, 0.0, 1.0);
+          gl_FragData[0] = vec4(0.0, 1.0, 1.0, 1.0);
           return;
         }
   
@@ -1023,6 +1021,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ${computeGradientOpacityFactor}
       ${applyLighting}
       ${getColorForValue}
+      ${getRayPointIntersectionBounds}
+      ${computeRayDistances}
       ${isInsideTexture}
       ${applyBlend}
       
@@ -1055,6 +1055,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         dists.x = min(dists.x, getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC));
         dists.y = max(dists.y, getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC));
         
+        // Temporarily added to try to fix rays
+        dists = vec2(-1.0, 100.0*camFar);
+        
         // do not go behind front clipping plane
         dists.x = max(0.0, dists.x);
       
@@ -1082,13 +1085,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
         // compute the start and end points for the ray
         vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC, closestPoint, furthestPoint);
+        // vec2 rayStartEndDistancesVC = computeRayDistances_0(rayDirVC, vec3(1 / volumeDimensions_0));
 
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
-        if (rayStartEndDistancesVC.y >= rayStartEndDistancesVC.x) {
-          gl_FragData[0] = vec4(0.0, 0.0, 1.0, 0.5);
-          return;
-          // discard;
+        if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
+          discard;
         }
 
         // IS = Index Space
@@ -1449,15 +1451,30 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const cam = model.openGLCamera.getRenderable();
     const dop = cam.getDirectionOfProjection();
     const crange = cam.getClippingRange();
+    const smallestVoxelSize = getSmallestVoxelSizeForVolumes(actors);
 
     program.setUniformf('camThick', crange[1] - crange[0]);
     program.setUniformf('camNear', crange[0]);
     program.setUniformf('camFar', crange[1]);
     program.setUniform3f('cameraDOP', dop[0], dop[1], dop[2]);
-    program.setUniformf(
-      'smallestVoxelSize',
-      getSmallestVoxelSizeForVolumes(actors)
-    );
+    program.setUniformf('smallestVoxelSize', smallestVoxelSize);
+
+    const len1 = vec4.create();
+    vec4.set(len1, 0.0, 0.0, 0.0, 0.0);
+
+    const lenPos1 = vec4.create();
+    vec4.transformMat4(lenPos1, len1, keyMats.wcvc);
+
+    const len2 = vec4.create();
+    vec4.set(len2, smallestVoxelSize, 0.0, 0.0, 0.0);
+
+    const lenPos2 = vec4.create();
+    vec4.transformMat4(lenPos2, len2, keyMats.wcvc);
+
+    const delta = vec4.create();
+    vec4.subtract(delta, lenPos2, lenPos1);
+
+    const deltaLen = vec4.length(delta);
 
     const camera = model.openGLCamera.getRenderable();
     const points = getClosestAndFurthestPointsFromCamera(camera, actors);
@@ -2427,9 +2444,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // as the most recently modified volume property
       mostRecentMTime = Math.max(mostRecentMTime, vprop.getMTime());
     }
-
-    console.log(combinedCTable);
-    debugger;
 
     model.colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
     model.colorTexture.setMinificationFilter(Filter.LINEAR);
