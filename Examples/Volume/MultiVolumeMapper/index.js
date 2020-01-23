@@ -85,7 +85,7 @@ greenCube.imageData.setOrigin(0.5, 0, 0);
 objects.push(redCube, blueCube, greenCube);
 
 renderer.addVolume(redCube.actor);
-// renderer.addVolume(blueCube.actor);
+renderer.addVolume(blueCube.actor);
 // renderer.addVolume(greenCube.actor);
 
 renderer.setUseMultiVolumeRendering(true);
