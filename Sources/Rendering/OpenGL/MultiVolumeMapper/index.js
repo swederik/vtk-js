@@ -89,6 +89,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       const actors = model.renderable.getVolumes();
 
       actors.forEach((actor, volIdx) => {
+        model.perVol[volIdx] = model.perVol[volIdx] || {};
+
         if (!model.perVol[volIdx].scalarTexture) {
           model.perVol[volIdx].scalarTexture = vtkOpenGLTexture.newInstance();
         }
@@ -817,30 +819,30 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       uniform float sampleDistance;
       `;
 
-    let uniformDefinitions;
-    let getTextureValue;
-    let computeNormal;
-    let computeMat4Normal;
-    let computeGradientOpacityFactor;
-    let applyLighting;
-    let getColorForValue;
-    let getRayPointIntersectionBounds;
-    let computeIndexSpaceValues;
-    let computeRayDistances;
+    let uniformDefinitions = '';
+    let getTextureValue = '';
+    let computeNormal = '';
+    let computeMat4Normal = '';
+    let computeGradientOpacityFactor = '';
+    let applyLighting = '';
+    let getColorForValue = '';
+    let getRayPointIntersectionBounds = '';
+    let computeIndexSpaceValues = '';
+    let computeRayDistances = '';
 
     for (let i = 0; i < numVolumes; i++) {
       const numComp = 1; // model.perVol[i].numComp
 
-      uniformDefinitions = getUniformDefinitions(i, numComp);
-      getTextureValue = getGetTextureValue(i, numComp);
-      computeNormal = getComputeNormal(i);
-      computeMat4Normal = getComputeMat4Normal(i, numComp);
-      computeGradientOpacityFactor = getComputeGradientOpacityFactor(i);
-      applyLighting = getApplyLighting(i);
-      getColorForValue = getGetColorForValue(i, numComp);
-      computeIndexSpaceValues = getComputeIndexSpaceValues(i);
-      computeRayDistances = getComputeRayDistances(i);
-      getRayPointIntersectionBounds = getGetRayPointIntersectionBounds(i);
+      uniformDefinitions += getUniformDefinitions(i, numComp);
+      getTextureValue += getGetTextureValue(i, numComp);
+      computeNormal += getComputeNormal(i);
+      computeMat4Normal += getComputeMat4Normal(i, numComp);
+      computeGradientOpacityFactor += getComputeGradientOpacityFactor(i);
+      applyLighting += getApplyLighting(i);
+      getColorForValue += getGetColorForValue(i, numComp);
+      computeIndexSpaceValues += getComputeIndexSpaceValues(i);
+      computeRayDistances += getComputeRayDistances(i);
+      getRayPointIntersectionBounds += getGetRayPointIntersectionBounds(i);
     }
 
     const applyBlend = getApplyBlend(numVolumes);
@@ -1271,12 +1273,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     // we will only render those fragments.
     const pos = vec3.create();
     const dir = vec3.create();
-    let dcxmin = 1.0;
-    let dcxmax = -1.0;
-    let dcymin = 1.0;
-    let dcymax = -1.0;
+    const dcxmin = 1.0;
+    const dcxmax = -1.0;
+    const dcymin = 1.0;
+    const dcymax = -1.0;
 
-    for (let i = 0; i < 8; ++i) {
+    /* for (let i = 0; i < 8; ++i) {
       vec3.set(
         pos,
         bounds[i % 2],
@@ -1302,7 +1304,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       dcxmax = Math.max(pos[0], dcxmax);
       dcymin = Math.min(pos[1], dcymin);
       dcymax = Math.max(pos[1], dcymax);
-    }
+    } */
 
     program.setUniformf('dcxmin', dcxmin);
     program.setUniformf('dcxmax', dcxmax);
@@ -2482,7 +2484,7 @@ export function extend(publicAPI, model, initialValues = {}) {
   macro.obj(model.keyMatrixTime, { mtime: 0 });
 
   // Per actor
-  model.perVol = [{}];
+  model.perVol = [];
 
   model.tris = vtkHelper.newInstance();
 
