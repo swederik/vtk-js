@@ -314,6 +314,22 @@ function vtkImageData(publicAPI, model) {
     return vout;
   };
 
+  publicAPI.getCorners = () => {
+    const ex = publicAPI.getExtent();
+    const corners = [
+      [ex[0], ex[2], ex[4]],
+      [ex[1], ex[2], ex[4]],
+      [ex[0], ex[3], ex[4]],
+      [ex[1], ex[3], ex[4]],
+      [ex[0], ex[2], ex[5]],
+      [ex[1], ex[2], ex[5]],
+      [ex[0], ex[3], ex[5]],
+      [ex[1], ex[3], ex[5]],
+    ];
+
+    return corners.map((corner) => publicAPI.indexToWorld(corner));
+  };
+
   // slow version for generic arrays
   publicAPI.indexToWorld = (ain, aout = []) => {
     const vin = vec3.fromValues(ain[0], ain[1], ain[2]);

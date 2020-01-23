@@ -142,6 +142,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         uniform vec3 vPlaneNormal5_${i};
         uniform float vPlaneDistance5_${i};
         uniform vec3 vVCToIJK_${i};
+        uniform mat4 viewToIndex_${i};
       `;
 
     // Opacity and Color shifts
@@ -276,8 +277,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       texValueForNumComp = 'tmp.a = length(tmp.rgb);';
     }
     return `
-        vec4 getTextureValue_${i}(vec3 pos)
-        {
+        vec4 getTextureValue_${i}(vec3 pos) {        
           vec4 tmp = texture(texture${i + 1}, pos);
           ${texValueForNumComp}
           return tmp;
@@ -287,8 +287,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
   function getComputeNormal(i, numComp) {
     return `
-      vec4 computeNormal_${i}(vec3 pos, float scalar, vec3 tstep)
-      {
+      vec4 computeNormal_${i}(vec3 pos, float scalar, vec3 tstep) {
         vec4 result;
       
         result.x = getTextureValue_${i}(pos + vec3(tstep.x, 0.0, 0.0)).a - scalar;
@@ -583,7 +582,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
     // Given a texture value compute the color and opacity
     const getColorForValue = `
-    vec4 getColorForValue_${i}(vec4 tValue, vec3 posIS, vec3 tstep)
+    vec4 getColorForValue_${i}(vec4 tValue, vec3 pos)
     {
       // compute the normal and gradient magnitude if needed
       // We compute it as a vec4 if possible otherwise a mat4
@@ -725,18 +724,114 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     `;
   }
 
+  function getClosestAndFurthestPointsFromCamera(camera, actors) {
+    const dop = camera.getDirectionOfProjection();
+    const position = camera.getPosition();
+    const distances = [];
+
+    actors.forEach((actor) => {
+      const cornerVertices = actor
+        .getMapper()
+        .getInputData()
+        .getCorners();
+
+      cornerVertices.forEach((vertex) => {
+        // Define a plane using each corner of the
+        // actor bounding box and with the normal as the
+        // camera direction of projection
+        const point = vec3.create();
+        vec3.set(point, vertex[0], vertex[1], vertex[2]);
+
+        const normal = vec3.fromValues(dop[0], dop[1], dop[2]);
+        const normalizedDop = vec3.create();
+        vec3.normalize(normalizedDop, normal);
+
+        const constant = -vec3.dot(point, normal);
+        const plane = {
+          normal: normalizedDop,
+          constant,
+        };
+
+        // Find the distance between camera position and
+        // the plane
+        const distance = vec3.dot(plane.normal, position) + plane.constant;
+
+        // Add the distances to a list so we can sort it later
+        distances.push({
+          distance,
+          vertex,
+        });
+      });
+    });
+
+    // Sort the distances from camera position, along camera direction of projection,
+    // to each corner of each volume so we can find the minimum and maximum distances
+    // and use this to bound the ray start and end positions
+    distances.sort((a, b) => b.distance - a.distance);
+
+    const min = distances[0].vertex;
+    const max = distances[distances.length - 1].vertex;
+
+    return [min, max];
+  }
+
+  function getBoundingBoxAroundVolumes(actors) {
+    let xMax = 0;
+    let xMin = Infinity;
+    let yMax = 0;
+    let yMin = Infinity;
+    let zMax = 0;
+    let zMin = Infinity;
+
+    actors.forEach((actor) => {
+      const bounds = actor
+        .getMapper()
+        .getInputData()
+        .getBounds();
+
+      xMin = Math.min(xMin, bounds[0]);
+      xMax = Math.max(xMax, bounds[1]);
+      yMin = Math.min(yMin, bounds[2]);
+      yMax = Math.max(yMax, bounds[3]);
+      zMin = Math.min(zMin, bounds[4]);
+      zMax = Math.max(zMax, bounds[5]);
+    });
+
+    return [xMin, xMax, yMin, yMax, zMin, zMax];
+  }
+
+  function getSmallestVoxelSizeForVolumes(actors) {
+    let minSize = Infinity;
+
+    // We need to get the smallest individual dimension
+    // of all of the voxels across all volumes
+    actors.forEach((actor) => {
+      const spacing = actor
+        .getMapper()
+        .getInputData()
+        .getSpacing();
+
+      minSize = Math.min(minSize, ...spacing);
+    });
+
+    return minSize;
+  }
+
   function getApplyBlend(numVolumes) {
     const i = 0;
     // Apply the specified blend mode operation along the ray's path.
     return `
-      void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
+      void applyBlend(vec2 rayStartEndDistancesVC, vec3 rayDirVC)
       {
-        vec3 tstep = 1.0/tdims;
-  
+        // vec3 tstep = 1.0/tdims;
+        
+        vec3 posVC = rayStartEndDistancesVC.x * rayDirVC;
+        vec3 endVC = rayStartEndDistancesVC.y * rayDirVC;
+
         // start slightly inside and apply some jitter
-        vec3 delta = endIS - posIS;
-        vec3 stepIS = normalize(delta)*sampleDistanceIS;
-        float raySteps = length(delta)/sampleDistanceIS;
+        vec3 delta = endVC - posVC;
+        vec3 step = normalize(delta) * smallestVoxelSize;
+        float raySteps = length(delta) / smallestVoxelSize;
   
         // avoid 0.0 jitter
         float jitter = 0.01 + 0.99*texture2D(jtexture, gl_FragCoord.xy/32.0).r;
@@ -744,61 +839,91 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   
         // local vars for the loop
         vec4 color = vec4(0.0, 0.0, 0.0, 0.0);
-        vec4 tValue;
-        vec4 tColor;
-  
-        // Perform initial step at the volume boundary
-        // compute the scalar
-        tValue = getTextureValue_${i}(posIS);
-  
-        // COMPOSITE_BLEND
-        // now map through opacity and color
-        tColor = getColorForValue_${i}(tValue, posIS, tstep);
+        vec4 tValue = vec4(0.0, 0.0, 0.0, 0.0);
+        vec4 tColor = vec4(0.0, 0.0, 0.0, 0.0);
+        
+        vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
+        vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
+        bool isInside;
+         
+        isInside = isInsideTexture_${i}(pos);
+        if (isInside == true) {
+          // Perform initial step at the volume boundary
+          // compute the scalar
+          tValue = getTextureValue_${i}(pos);
+    
+          // COMPOSITE_BLEND
+          // now map through opacity and color
+          tColor = getColorForValue_${i}(tValue, pos);
+        }      
   
         // handle very thin volumes
         if (raySteps <= 1.0) {
           tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
           gl_FragData[0] = tColor;
+          gl_FragData[0] = vec4(0.0, 1.0, 0.0, 1.0);
           return;
         }
   
         tColor.a = 1.0 - pow(1.0 - tColor.a, jitter);
         color = vec4(tColor.rgb*tColor.a, tColor.a);
-        posIS += (jitter*stepIS);
+        posVC += (jitter*step);
   
         for (int i = 0; i < //VTK::MaximumSamplesValue ; ++i) {
           if (stepsTraveled + 1.0 >= raySteps) { break; }
     
-          // compute the scalar
-          tValue = getTextureValue_${i}(posIS);
-    
-          // now map through opacity and color
-          tColor = getColorForValue_${i}(tValue, posIS, tstep);
-    
-          float mix = (1.0 - color.a);
-    
-          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
+          vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
+          isInside = isInsideTexture_${i}(pos);
+          if (isInside == true) {
+            // compute the scalar
+            tValue = getTextureValue_${i}(pos);
+      
+            // now map through opacity and color
+            tColor = getColorForValue_${i}(tValue, pos);
+      
+            float mix = (1.0 - color.a);
+      
+            color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          }
+          
           stepsTraveled++;
-          posIS += stepIS;
+          posVC += step;
           if (color.a > 0.99) { color.a = 1.0; break; }
         }
     
         if (color.a < 0.99 && (raySteps - stepsTraveled) > 0.0) {
-          posIS = endIS;
+          posVC = endVC;
     
-          // compute the scalar
-          tValue = getTextureValue_${i}(posIS);
-    
-          // now map through opacity and color
-          tColor = getColorForValue_${i}(tValue, posIS, tstep);
-          tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps - stepsTraveled);
-    
-          float mix = (1.0 - color.a);
-          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
+          vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
+          isInside = isInsideTexture_${i}(pos);
+          if (isInside == true) {
+            // compute the scalar
+            tValue = getTextureValue_${i}(pos);
+      
+            // now map through opacity and color
+            tColor = getColorForValue_${i}(tValue, pos);
+            tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps - stepsTraveled);
+      
+            float mix = (1.0 - color.a);
+            color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          }
         }
     
         gl_FragData[0] = vec4(color.rgb/color.a, color.a);
       }`;
+  }
+
+  function getIsInsideTexture(i) {
+    return `
+      bool isInsideTexture_${i}(vec3 pos) {
+          return (pos.x < 0.0 || pos.y < 0.0 || pos.z < 0.0 ||
+              pos.x > float(volumeDimensions_${i}.x) ||
+              pos.y > float(volumeDimensions_${i}.y) ||
+              pos.z > float(volumeDimensions_${i}.z));
+        }
+    `;
   }
 
   publicAPI.createFragmentShader = (shaders, ren, actors) => {
@@ -817,6 +942,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // jitter texture
       uniform sampler2D jtexture;
       uniform float sampleDistance;
+      
+      uniform mat4 viewToWorldMatrix;
+      uniform vec3 cameraDOP;
+      uniform vec3 closestPoint;
+      uniform vec3 furthestPoint;
+      uniform float smallestVoxelSize;
       `;
 
     let uniformDefinitions = '';
@@ -829,6 +960,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     let getRayPointIntersectionBounds = '';
     let computeIndexSpaceValues = '';
     let computeRayDistances = '';
+    let isInsideTexture = '';
 
     for (let i = 0; i < numVolumes; i++) {
       const numComp = 1; // model.perVol[i].numComp
@@ -843,9 +975,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       computeIndexSpaceValues += getComputeIndexSpaceValues(i);
       computeRayDistances += getComputeRayDistances(i);
       getRayPointIntersectionBounds += getGetRayPointIntersectionBounds(i);
+      isInsideTexture += getIsInsideTexture(i);
     }
 
     const applyBlend = getApplyBlend(numVolumes);
+
+    const bounding = getBoundingBoxAroundVolumes(actors);
 
     const fragShader = `//VTK::System::Dec
 
@@ -878,10 +1013,50 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ${computeGradientOpacityFactor}
       ${applyLighting}
       ${getColorForValue}
+      ${isInsideTexture}
       ${applyBlend}
-      ${getRayPointIntersectionBounds}
-      ${computeRayDistances}
-      ${computeIndexSpaceValues}
+      
+      float getPlaneConstantFromNormalAndCoplanarPoint(vec3 normal, vec3 point) {
+        return -dot(normal, point);
+      }
+      
+      float getPointToPlaneDistance(vec3 planeNormal, float planeConstant, vec3 point) {
+        // Define a plane using the point and the normal
+        return dot(planeNormal, point) + planeConstant;
+      } 
+      
+      vec2 computeRayDistances(vec3 rayDir, vec3 closestPoint, vec3 furthestPoint)
+      {
+        vec2 dists = vec2(100.0*camFar, -1.0);
+        
+        // Define a plane using the ray direction and one of the points
+        vec3 cameraPositionVC = vec3(0.0, 0.0, 0.0);
+        
+        vec4 closestPointV4 = vec4(closestPoint.x, closestPoint.y, closestPoint.z, 1.0); 
+        vec3 closestPointVC = (viewToWorldMatrix * closestPointV4).xyz;
+        
+        vec4 furthestPointV4 = vec4(furthestPoint.x, furthestPoint.y, furthestPoint.z, 1.0); 
+        vec3 furthestPointVC = (viewToWorldMatrix * furthestPointV4).xyz;
+        
+        float closestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, closestPointVC);
+        float furthestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, furthestPointVC);
+        
+        dists.x = max(dists.x, getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC));
+        dists.y = min(dists.y, getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC));
+        
+        // do not go behind front clipping plane
+        dists.x = max(0.0, dists.x);
+      
+        // do not go PAST far clipping plane
+        float farDist = -camThick / rayDir.z;
+        dists.y = min(farDist, dists.y);
+        
+        // Do not go past the zbuffer value if set
+        // This is used for intermixing opaque geometry
+        //VTK::ZBuffer::Impl
+        
+        return dists;        
+      }
 
       void main() {
         vec3 rayDirVC;
@@ -894,10 +1069,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           rayDirVC = normalize(vertexVCVSOutput);
         }
 
-        vec3 tdims = vec3(volumeDimensions_0);
-
         // compute the start and end points for the ray
-        vec2 rayStartEndDistancesVC = computeRayDistances_0(rayDirVC, tdims);
+        vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC, closestPoint, furthestPoint);
 
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
@@ -906,13 +1079,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         }
 
         // IS = Index Space
-        vec3 posIS;
-        vec3 endIS;
-        float sampleDistanceIS;
-        computeIndexSpaceValues_0(posIS, endIS, sampleDistanceIS, rayDirVC, rayStartEndDistancesVC);
+        // vec3 posIS;
+        // vec3 endIS;
+        // float sampleDistanceIS;
+        // computeIndexSpaceValues_0(posIS, endIS, sampleDistanceIS, rayDirVC, rayStartEndDistancesVC);
 
         // Perform the blending operation along the ray
-        applyBlend(posIS, endIS, sampleDistanceIS, tdims);
+        applyBlend(rayStartEndDistancesVC, rayDirVC);
       }
     `;
 
@@ -1261,10 +1434,33 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const program = cellBO.getProgram();
 
     const cam = model.openGLCamera.getRenderable();
+    const dop = cam.getDirectionOfProjection();
     const crange = cam.getClippingRange();
+
     program.setUniformf('camThick', crange[1] - crange[0]);
     program.setUniformf('camNear', crange[0]);
     program.setUniformf('camFar', crange[1]);
+    program.setUniform3f('cameraDOP', dop[0], dop[1], dop[2]);
+    program.setUniformf(
+      'smallestVoxelSize',
+      getSmallestVoxelSizeForVolumes(actors)
+    );
+
+    const camera = model.openGLCamera.getRenderable();
+    const points = getClosestAndFurthestPointsFromCamera(camera, actors);
+
+    program.setUniform3f(
+      'closestPoint',
+      points[0][0],
+      points[0][1],
+      points[0][2]
+    );
+    program.setUniform3f(
+      'furthestPoint',
+      points[1][0],
+      points[1][1],
+      points[1][2]
+    );
 
     const bounds = model.currentInput.getBounds();
     const dims = model.currentInput.getDimensions();
@@ -1314,6 +1510,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     if (program.isUniformUsed('cameraParallel')) {
       program.setUniformi('cameraParallel', cam.getParallelProjection());
     }
+
+    const viewToWorldMatrix = mat4.create();
+    mat4.invert(viewToWorldMatrix, keyMats.wcvc);
+
+    program.setUniformMatrix('viewToWorldMatrix', viewToWorldMatrix);
+    program.setUniformMatrix('viewToIndexMatrix', model.vie);
 
     actors.forEach((actor, volIdx) => {
       const ext = model.currentInput.getExtent();
@@ -1376,6 +1578,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         dims[1],
         dims[2]
       );
+
+      const viewToIndex = mat4.create();
+      mat4.invert(viewToIndex, model.idxToView);
+
+      program.setUniformMatrix(`viewToIndex_${volIdx}`, viewToIndex);
 
       // map normals through normal matrix
       // then use a point on the plane to compute the distance
