@@ -728,6 +728,50 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   }
 
   function getApplyBlend(numVolumes) {
+    let compositeVolumes = `
+      vec3 pos;
+      vec3 tpos; 
+      vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
+    `;
+
+    for (let i = 0; i < numVolumes; i++) {
+      compositeVolumes += `
+        pos = (viewToIndex_${i} * posVCv4).xyz;
+        tpos = pos / vec3(volumeDimensions_${i});
+        
+        if (isInsideTexture_${i}(tpos) == true) {
+          tValue = getTextureValue_${i}(tpos);
+          tColor = getColorForValue_${i}(tValue, tpos);
+        }
+        
+        color = color + tColor;
+      `;
+    }
+
+    let compositeAndMixVolumes = `
+      vec3 pos;
+      vec3 tpos; 
+      vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
+      float mix; 
+    `;
+
+    for (let i = 0; i < numVolumes; i++) {
+      compositeAndMixVolumes += `
+        pos = (viewToIndex_${i} * posVCv4).xyz;
+        tpos = pos / vec3(volumeDimensions_${i});
+        mix = (1.0 - color.a);
+        
+        if (isInsideTexture_${i}(tpos) == true) {
+          tValue = getTextureValue_${i}(pos);
+          tColor = getColorForValue_${i}(tValue, pos);
+    
+          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+        }
+        
+        color = color + tColor;
+      `;
+    }
+
     const i = 0;
     // Apply the specified blend mode operation along the ray's path.
     return `
@@ -754,27 +798,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vec4 tValue = vec4(0.0, 0.0, 0.0, 0.0);
         vec4 tColor = vec4(0.0, 0.0, 0.0, 0.0);
         
-        vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
-        vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
-        vec3 tpos = pos / vec3(volumeDimensions_${i});
+        //vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
+        //vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
+        //vec3 tpos = pos / vec3(volumeDimensions_${i});
         
         bool isInside;
-         
-        isInside = isInsideTexture_${i}(tpos);
-        if (isInside == true) {
-          // Perform initial step at the volume boundary
-          // compute the scalar
-          tValue = getTextureValue_${i}(tpos);
-    
-          // COMPOSITE_BLEND
-          // now map through opacity and color
-          tColor = getColorForValue_${i}(tValue, tpos);
-        }
+        
+        ${compositeVolumes}
                 
         // handle very thin volumes
         if (raySteps <= 1.0) {
-          tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
-          gl_FragData[0] = tColor;
+          color.a = 1.0 - pow(1.0 - color.a, raySteps);
+          gl_FragData[0] = color;
           return;
         }
   
@@ -784,21 +819,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   
         for (int i = 0; i < //VTK::MaximumSamplesValue ; ++i) {
           if (stepsTraveled + 1.0 >= raySteps) { break; }
-    
-          vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
-          vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
-          vec3 tpos = pos / vec3(volumeDimensions_${i});
-          isInside = isInsideTexture_${i}(tpos);
-          float mix = (1.0 - color.a);
-          if (isInside == true) {
-            // compute the scalar
-            tValue = getTextureValue_${i}(pos);
-      
-            // now map through opacity and color
-            tColor = getColorForValue_${i}(tValue, pos);
-      
-            color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
-          }
+          
+          ${compositeAndMixVolumes}
           
           stepsTraveled++;
           posVC += step;
@@ -807,23 +829,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     
         if (color.a < 0.99 && (raySteps - stepsTraveled) > 0.0) {
           posVC = endVC;
-    
-          vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
-          vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
-          vec3 tpos = pos / vec3(volumeDimensions_${i});
-          float mix = (1.0 - color.a);
-          isInside = isInsideTexture_${i}(tpos);
-          
-          if (isInside == true) {
-            // compute the scalar
-            tValue = getTextureValue_${i}(tpos);
-      
-            // now map through opacity and color
-            tColor = getColorForValue_${i}(tValue, tpos);
-            tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps - stepsTraveled);
-      
-            color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
-          }
+        
+          ${compositeAndMixVolumes}
         }
     
         gl_FragData[0] = vec4(color.rgb/color.a, color.a);
@@ -1436,11 +1443,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const viewToWorldMatrix = mat4.create();
     mat4.invert(viewToWorldMatrix, keyMats.wcvc);
 
-    // vec4 furthestPointV4 = vec4(furthestPoint.x, furthestPoint.y, furthestPoint.z, 1.0);
-    //         vec3 furthestPointVC = (worldToViewMatrix * furthestPointV4).xyz;
-    //
-    //         float closestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, closestPointVC);
-    //         float furthestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, furthestPointVC);
     const closestPoint = vec4.create();
     vec4.set(closestPoint, points[0][0], points[0][1], points[0][2], 1.0);
 
@@ -1457,8 +1459,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     program.setUniformMatrix('viewToIndexMatrix', model.vie);
 
     actors.forEach((actor, volIdx) => {
-      const ext = model.currentInput.getExtent();
-      const spc = model.currentInput.getSpacing();
+      const imageData = actor.getMapper().getInputData();
+      const ext = imageData.getExtent();
+      const spc = imageData.getSpacing();
 
       const vsize = vec3.create();
       vec3.set(
@@ -1470,13 +1473,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniform3f(`vSpacing_${volIdx}`, spc[0], spc[1], spc[2]);
 
       vec3.set(pos, ext[0], ext[2], ext[4]);
-      model.currentInput.indexToWorldVec3(pos, pos);
+      imageData.indexToWorldVec3(pos, pos);
 
       vec3.transformMat4(pos, pos, model.modelToView);
       program.setUniform3f(`vOriginVC_${volIdx}`, pos[0], pos[1], pos[2]);
 
       // apply the image directions
-      const i2wmat4 = model.currentInput.getIndexToWorld();
+      const i2wmat4 = imageData.getIndexToWorld();
       mat4.multiply(model.idxToView, model.modelToView, i2wmat4);
 
       mat3.multiply(

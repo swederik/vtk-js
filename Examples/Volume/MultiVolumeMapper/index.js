@@ -77,16 +77,16 @@ const blueCube = createCube();
 const greenCube = createCube();
 
 blueCube.ctfun.addRGBPoint(1, 0, 0, 1);
-blueCube.imageData.setOrigin(0.5, 0.5, 0);
+blueCube.imageData.setOrigin(5, 0, 0);
 
 greenCube.ctfun.addRGBPoint(1, 0, 1, 0);
-greenCube.imageData.setOrigin(0.5, 0, 0);
+greenCube.imageData.setOrigin(0, -5, 0);
 
 objects.push(redCube, blueCube, greenCube);
 
 renderer.addVolume(redCube.actor);
 renderer.addVolume(blueCube.actor);
-// renderer.addVolume(greenCube.actor);
+renderer.addVolume(greenCube.actor);
 
 renderer.setUseMultiVolumeRendering(true);
 
