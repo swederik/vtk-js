@@ -2186,19 +2186,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
     }
 
-    if (!model.colorTextureMTime) {
-      // rebuildColorTransferFunctionTexture(actors);
-    }
-
-    if (!model.opacityTextureMTime) {
-      rebuildOpacityTransferFunctionTexture(actors);
-    }
-
     const numVolumes = actors.length;
-    const needToRebuildTexture = {
-      opacity: false,
-      color: false,
-    };
 
     let toString;
 
@@ -2218,28 +2206,64 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // let { scalarTexture, scalarTextureMTime } = volumeData;
       const { opacityTextureMTime, colorTextureMTime } = volumeData;
 
-      // If any volumeProperty has been modified more recently than
-      // the last time the combined opacity texture was created,
-      // we need to rebuild the texture
-      if (
-        vprop.getMTime() > opacityTextureMTime &&
-        !needToRebuildTexture.opacity
-      ) {
-        needToRebuildTexture.opacity = true;
+      // rebuild opacity tfun?
+      if (opacityTextureMTime !== vprop.getMTime()) {
+        const oWidth = 1024;
+        const oSize = oWidth * 2 * numIComps;
+        const ofTable = new Float32Array(oSize);
+        const tmpTable = new Float32Array(oWidth);
+
+        for (let c = 0; c < numIComps; ++c) {
+          const ofun = vprop.getScalarOpacity(c);
+          const opacityFactor = 1.0 / vprop.getScalarOpacityUnitDistance(c);
+
+          const oRange = ofun.getRange();
+          ofun.getTable(oRange[0], oRange[1], oWidth, tmpTable, 1);
+          // adjust for sample distance etc
+          for (let i = 0; i < oWidth; ++i) {
+            ofTable[c * oWidth * 2 + i] =
+              1.0 - (1.0 - tmpTable[i]) ** opacityFactor;
+            ofTable[c * oWidth * 2 + i + oWidth] = ofTable[c * oWidth * 2 + i];
+          }
+        }
+
+        model.opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        model.opacityTexture.setMinificationFilter(Filter.LINEAR);
+        model.opacityTexture.setMagnificationFilter(Filter.LINEAR);
+
+        // use float texture where possible because we really need the resolution
+        // for this table. Errors in low values of opacity accumulate to
+        // visible artifacts. High values of opacity quickly terminate without
+        // artifacts.
+        if (
+          model.openGLRenderWindow.getWebgl2() ||
+          (model.context.getExtension('OES_texture_float') &&
+            model.context.getExtension('OES_texture_float_linear'))
+        ) {
+          model.opacityTexture.create2DFromRaw(
+            oWidth,
+            2 * numIComps,
+            1,
+            VtkDataTypes.FLOAT,
+            ofTable
+          );
+        } else {
+          const oTable = new Uint8Array(oSize);
+          for (let i = 0; i < oSize; ++i) {
+            oTable[i] = 255.0 * ofTable[i];
+          }
+          model.opacityTexture.create2DFromRaw(
+            oWidth,
+            2 * numIComps,
+            1,
+            VtkDataTypes.UNSIGNED_CHAR,
+            oTable
+          );
+        }
+        model.opacityTextureString = toString;
       }
 
-      // If any volumeProperty has been modified more recently than
-      // the last time the combined color texture was created,
-      // we need to rebuild the texture
-      //
-      // TODO[multivolume]: Can't we check the vprop.colorTransferFn
-      // instead of just the volume prop?
-      if (vprop.getMTime() > colorTextureMTime && !needToRebuildTexture.color) {
-        // needToRebuildTexture.color = true;
-      }
-
-      toString = `${vprop.getMTime()}`;
-      if (model.colorTextureString !== toString) {
+      if (colorTextureMTime !== vprop.getMTime()) {
         const cWidth = 1024;
         const cSize = cWidth * 2 * numIComps * 3;
         const cTable = new Uint8Array(cSize);
@@ -2294,18 +2318,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             .getScalars()
             .getData()
         );
-        // console.log(model.scalarTexture.get());
+
         model.scalarTextureString = toString;
       }
     });
-
-    if (needToRebuildTexture.opacity) {
-      rebuildOpacityTransferFunctionTexture(actors);
-    }
-
-    if (needToRebuildTexture.color) {
-      // rebuildColorTransferFunctionTexture(actors);
-    }
 
     if (!model.tris.getCABO().getElementCount()) {
       // build the CABO
