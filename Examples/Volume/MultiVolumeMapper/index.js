@@ -1,5 +1,6 @@
 import 'vtk.js/Sources/favicon';
 
+import { vec3 } from 'gl-matrix';
 import vtkFullScreenRenderWindow from 'vtk.js/Sources/Rendering/Misc/FullScreenRenderWindow';
 import vtkPiecewiseFunction from 'vtk.js/Sources/Common/DataModel/PiecewiseFunction';
 import vtkColorTransferFunction from 'vtk.js/Sources/Rendering/Core/ColorTransferFunction';
@@ -90,8 +91,13 @@ renderer.addVolume(redCube.actor);
 renderer.setUseMultiVolumeRendering(true);
 
 renderer.resetCamera();
-// renderer.getActiveCamera().elevation(-70);
+const dop = vec3.create();
+vec3.set(dop, 0.5, 0.5, 0.5);
+vec3.normalize(dop, dop);
+console.log(dop);
+renderer.getActiveCamera().setDirectionOfProjection(dop[0], dop[1], dop[2]);
 renderer.getActiveCamera().setParallelProjection(true);
+renderer.resetCamera();
 
 renderWindow.render();
 

@@ -118,6 +118,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         uniform float vPlaneDistance4_${i};
         uniform vec3 vPlaneNormal5_${i};
         uniform float vPlaneDistance5_${i};
+        uniform vec3 vVCToIJK_${i};
       `;
 
     // Opacity and Color shifts
@@ -136,17 +137,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         uniform float vSpecular_${i};
       `;
 
-    // Components
     uniformDefinitions += `
-        uniform float numComps_${i};
-      `;
-
-    uniformDefinitions += `
-        uniform vec3 vVCToIJK_${i};
-      `;
-
-    uniformDefinitions += `
-        uniform highp sampler3D texture${i};
+        uniform highp sampler3D texture${i + 1};
       `;
 
     // the heights defined below are the locations
@@ -158,28 +150,28 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     if (vtkIndependentComponentsOn) {
       if (numComp === 2) {
         uniformDefinitions += `
-          uniform float mix0;
-          uniform float mix1;
-          #define height0 0.25
-          #define height1 0.75`;
+          uniform float mix0_${i};
+          uniform float mix1_${i};
+          #define height0_${i} 0.25
+          #define height1_${i} 0.75`;
       } else if (numComp === 3) {
         uniformDefinitions += `
-          uniform float mix0;
-          uniform float mix1;
-          uniform float mix2;
-          #define height0 0.17
-          #define height1 0.5
-          #define height2 0.83`;
+          uniform float mix0_${i};
+          uniform float mix1_${i};
+          uniform float mix2_${i};
+          #define height0_${i} 0.17
+          #define height1_${i} 0.5
+          #define height2_${i}0.83`;
       } else if (numComp === 4) {
         uniformDefinitions += `
-          uniform float mix0;
-          uniform float mix1;
-          uniform float mix2;
-          uniform float mix3;
-          #define height0 0.125
-          #define height1 0.375
-          #define height2 0.625
-          #define height3 0.875`;
+          uniform float mix0_${i};
+          uniform float mix1_${i};
+          uniform float mix2_${i};
+          uniform float mix3_${i};
+          #define height0_${i} 0.125
+          #define height1_${i} 0.375
+          #define height2_${i} 0.625
+          #define height3_${i} 0.875`;
       }
     }
 
@@ -248,8 +240,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   }
 
   function getGetTextureValue(i, numComp) {
-    let texValueForNumComp = 'tmp.a = tmp.r;';
-    if (numComp === 2) {
+    let texValueForNumComp;
+    if (numComp === 1) {
+      texValueForNumComp = 'tmp.a = tmp.r;';
+    } else if (numComp === 2) {
       texValueForNumComp = 'tmp.a = tmp.g;';
     } else if (numComp === 3) {
       texValueForNumComp = 'tmp.a = length(tmp.rgb);';
@@ -257,7 +251,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     return `
         vec4 getTextureValue_${i}(vec3 pos)
         {
-          vec4 tmp = texture(texture${i}, pos);
+          vec4 tmp = texture(texture${i + 1}, pos);
           ${texValueForNumComp}
           return tmp;
         }
@@ -371,7 +365,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       float computeGradientOpacityFactor_${i}(
         vec4 normal, float goscale, float goshift, float gomin, float gomax)
       {
-        ${result};
+        ${result}
       }
     `;
   }
@@ -516,7 +510,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     {
       // compute starting and ending values in volume space
       pos = vertexVCVSOutput + dists.x*rayDir;
-      pos = pos - vOriginVC;
+      pos = pos - vOriginVC_${i};
       // convert to volume basis and origin
       pos = vec3(
         dot(pos, vPlaneNormal0_${i}),
@@ -740,10 +734,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     let computeRayDistances;
 
     for (let i = 0; i < numVolumes; i++) {
-      const numComp = model.perVol[i].numComp;
+      const numComp = 1; // model.perVol[i].numComp
 
       uniformDefinitions = getUniformDefinitions(i, numComp);
-      getTextureValue = getGetTextureValue(i);
+      getTextureValue = getGetTextureValue(i, numComp);
       computeNormal = getComputeNormal(i);
       computeMat4Normal = getComputeMat4Normal(i, numComp);
       computeGradientOpacityFactor = getComputeGradientOpacityFactor(i);
@@ -831,7 +825,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       uniform float cshift0;
       uniform float cscale0;
       uniform vec3 vVCToIJK;
-      uniform highp sampler3D texture1;
 
       // the heights defined below are the locations
       // for the up to four components of the tfuns
@@ -1347,7 +1340,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vec3 posIS;
         vec3 endIS;
         float sampleDistanceIS;
-        computeIndexSpaceValues(posIS, endIS, sampleDistanceIS, rayDirVC, rayStartEndDistancesVC);
+        computeIndexSpaceValues_0(posIS, endIS, sampleDistanceIS, rayDirVC, rayStartEndDistancesVC);
 
         // Perform the blending operation along the ray
         applyBlend(posIS, endIS, sampleDistanceIS, tdims);
@@ -1763,12 +1756,14 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       (ext[5] - ext[4] + 1) * spc[2]
     );
     program.setUniform3f('vSpacing', spc[0], spc[1], spc[2]);
+    program.setUniform3f('vSpacing_0', spc[0], spc[1], spc[2]);
 
     vec3.set(pos, ext[0], ext[2], ext[4]);
     model.currentInput.indexToWorldVec3(pos, pos);
 
     vec3.transformMat4(pos, pos, model.modelToView);
     program.setUniform3f('vOriginVC', pos[0], pos[1], pos[2]);
+    program.setUniform3f('vOriginVC_0', pos[0], pos[1], pos[2]);
 
     // apply the image directions
     const i2wmat4 = model.currentInput.getIndexToWorld();
@@ -1801,7 +1796,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     vec3.set(vctoijk, 1.0, 1.0, 1.0);
     vec3.divide(vctoijk, vctoijk, vsize);
     program.setUniform3f('vVCToIJK', vctoijk[0], vctoijk[1], vctoijk[2]);
+    program.setUniform3f('vVCToIJK_0', vctoijk[0], vctoijk[1], vctoijk[2]);
     program.setUniform3i('volumeDimensions', dims[0], dims[1], dims[2]);
+    program.setUniform3i('volumeDimensions_0', dims[0], dims[1], dims[2]);
 
     if (!model.openGLRenderWindow.getWebgl2()) {
       const volInfo = model.scalarTexture.getVolumeInfo();
@@ -1851,23 +1848,14 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // we have the plane in view coordinates
       // specify the planes in view coordinates
       program.setUniform3f(`vPlaneNormal${i}`, normal[0], normal[1], normal[2]);
+      program.setUniform3f(
+        `vPlaneNormal${i}_0`,
+        normal[0],
+        normal[1],
+        normal[2]
+      );
       program.setUniformf(`vPlaneDistance${i}`, dist);
-
-      if (actor.getProperty().getUseLabelOutline()) {
-        const image = model.currentInput;
-        const worldToIndex = image.getWorldToIndex();
-
-        program.setUniformMatrix('vWCtoIDX', worldToIndex);
-
-        // Get the display coordinate to world coordinate transformation matrix.
-        mat4.invert(model.displayToWorld, keyMats.wcdc);
-        program.setUniformMatrix('DCWCMatrix', model.displayToWorld);
-
-        const size = publicAPI.getRenderTargetSize();
-
-        program.setUniformf('vpWidth', size[0]);
-        program.setUniformf('vpHeight', size[1]);
-      }
+      program.setUniformf(`vPlaneDistance${i}_0`, dist);
     }
 
     mat4.invert(model.displayToView, keyMats.vcdc);
