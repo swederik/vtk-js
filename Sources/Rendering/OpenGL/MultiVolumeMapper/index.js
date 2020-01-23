@@ -397,7 +397,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // compute the normal vectors as needed
       #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
       #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-      mat4 normalMat = computeMat4Normal(posIS, tValue, tstep);
+      mat4 normalMat = computeMat4Normal_${i}(posIS, tValue, tstep);
       vec4 normal0 = normalMat[0];
       vec4 normal1 = normalMat[1];
       #if vtkNumComponents > 2
@@ -407,7 +407,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       vec4 normal3 = normalMat[3];
       #endif
       #else
-      vec4 normal0 = computeNormal(posIS, tValue.a, tstep);
+      vec4 normal0 = computeNormal_${i}(posIS, tValue.a, tstep);
       #endif
       #endif
 
@@ -884,109 +884,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       //VTK::Light::Dec
 
       ${getTextureValue}
-      vec4 getTextureValue(vec3 pos)
-      {
-        vec4 tmp = texture(texture1, pos);
-        #if vtkNumComponents == 1
-        tmp.a = tmp.r;
-        #endif
-        #if vtkNumComponents == 2
-        tmp.a = tmp.g;
-        #endif
-        #if vtkNumComponents == 3
-        tmp.a = length(tmp.rgb);
-        #endif
-        return tmp;
-      }
-
       ${computeNormal}
-      // compute the normal and gradient magnitude for a position
-      vec4 computeNormal(vec3 pos, float scalar, vec3 tstep)
-      {
-        vec4 result;
-
-        result.x = getTextureValue(pos + vec3(tstep.x, 0.0, 0.0)).a - scalar;
-        result.y = getTextureValue(pos + vec3(0.0, tstep.y, 0.0)).a - scalar;
-        result.z = getTextureValue(pos + vec3(0.0, 0.0, tstep.z)).a - scalar;
-
-        // divide by spacing
-        result.xyz /= vSpacing;
-
-        result.w = length(result.xyz);
-
-        // rotate to View Coords
-        result.xyz =
-        result.x * vPlaneNormal0 +
-        result.y * vPlaneNormal2 +
-        result.z * vPlaneNormal4;
-
-        if (result.w > 0.0) {
-          result.xyz /= result.w;
-        }
-        return result;
-      }
-
       ${computeMat4Normal}
-      // compute the normals and gradient magnitudes for a position
-      // for independent components
-      mat4 computeMat4Normal(vec3 pos, vec4 tValue, vec3 tstep)
-      {
-        mat4 result;
-        vec4 distX = getTextureValue(pos + vec3(tstep.x, 0.0, 0.0)) - tValue;
-        vec4 distY = getTextureValue(pos + vec3(0.0, tstep.y, 0.0)) - tValue;
-        vec4 distZ = getTextureValue(pos + vec3(0.0, 0.0, tstep.z)) - tValue;
-
-        // divide by spacing
-        distX /= vSpacing.x;
-        distY /= vSpacing.y;
-        distZ /= vSpacing.z;
-
-        mat3 rot;
-        rot[0] = vPlaneNormal0;
-        rot[1] = vPlaneNormal2;
-        rot[2] = vPlaneNormal4;
-
-        result[0].xyz = vec3(distX.r, distY.r, distZ.r);
-        result[0].a = length(result[0].xyz);
-        result[0].xyz *= rot;
-        if (result[0].w > 0.0)
-        {
-          result[0].xyz /= result[0].w;
-        }
-
-        result[1].xyz = vec3(distX.g, distY.g, distZ.g);
-        result[1].a = length(result[1].xyz);
-        result[1].xyz *= rot;
-        if (result[1].w > 0.0)
-        {
-          result[1].xyz /= result[1].w;
-        }
-
-          // optionally compute the 3rd component
-          #if vtkNumComponents >= 3
-        result[2].xyz = vec3(distX.b, distY.b, distZ.b);
-        result[2].a = length(result[2].xyz);
-        result[2].xyz *= rot;
-        if (result[2].w > 0.0)
-        {
-          result[2].xyz /= result[2].w;
-        }
-          #endif
-
-          // optionally compute the 4th component
-          #if vtkNumComponents >= 4
-        result[3].xyz = vec3(distX.a, distY.a, distZ.a);
-        result[3].a = length(result[3].xyz);
-        result[3].xyz *= rot;
-        if (result[3].w > 0.0)
-        {
-          result[3].xyz /= result[3].w;
-        }
-          #endif
-
-        return result;
-      }
-
       ${computeGradientOpacityFactor}
       ${applyLighting}
 
@@ -1002,7 +901,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         // compute the normal vectors as needed
         #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
         #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-        mat4 normalMat = computeMat4Normal(posIS, tValue, tstep);
+        mat4 normalMat = computeMat4Normal_0(posIS, tValue, tstep);
         vec4 normal0 = normalMat[0];
         vec4 normal1 = normalMat[1];
         #if vtkNumComponents > 2
@@ -1012,7 +911,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vec4 normal3 = normalMat[3];
         #endif
         #else
-        vec4 normal0 = computeNormal(posIS, tValue.a, tstep);
+        vec4 normal0 = computeNormal_0(posIS, tValue.a, tstep);
         #endif
         #endif
 
