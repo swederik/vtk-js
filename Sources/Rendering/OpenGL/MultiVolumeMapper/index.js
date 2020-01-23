@@ -826,7 +826,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         // vec3 tstep = 1.0/tdims;
         
         vec3 posVC = vertexVCVSOutput + rayStartEndDistancesVC.x * rayDirVC;
-        vec3 endVC = vertexVCVSOutput + rayStartEndDistancesVC.y * rayDirVC;
+        vec3 endVC = vertexVCVSOutput + rayStartEndDistancesVC.y * rayDirVC * 100.0;
         
         vec3 lenPos1 = (worldToViewMatrix * vec4(0.0, 0.0, 0.0, 0.0)).xyz; 
         vec3 lenPos2 = (worldToViewMatrix * vec4(smallestVoxelSize, 0.0, 0.0, 0.0)).xyz;
@@ -891,6 +891,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             tColor = getColorForValue_${i}(tValue, pos);
       
             color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          } else {
+            // gl_FragData[0] = vec4(0.1, 0.7, 0.1, 1.0);
+            color = vec4(0.1, 0.7, 0.1, 0.5);
+            //return;
           }
           
           stepsTraveled++;
@@ -927,9 +931,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     return `
       bool isInsideTexture_${i}(vec3 pos) {
           return !(pos.x < 0.0 || pos.y < 0.0 || pos.z < 0.0 ||
-              pos.x > float(volumeDimensions_${i}.x) ||
-              pos.y > float(volumeDimensions_${i}.y) ||
-              pos.z > float(volumeDimensions_${i}.z));
+              pos.x > 1.0 ||
+              pos.y > 1.0 ||
+              pos.z > 1.0);
         }
     `;
   }
@@ -1052,8 +1056,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         float furthestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, furthestPointVC);
         
         // X is close, Y is far
-        dists.x = min(dists.x, getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC));
-        dists.y = max(dists.y, getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC));
+        dists.x = getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC);
+        dists.y = getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC);
         
         // Temporarily added to try to fix rays
         dists = vec2(-1.0, 100.0*camFar);
@@ -1090,6 +1094,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
         if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
+          gl_FragData[0] = vec4(0.5, 0.5, 0.0, 1.0);
           discard;
         }
 
