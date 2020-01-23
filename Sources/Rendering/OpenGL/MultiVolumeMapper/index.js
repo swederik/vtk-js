@@ -431,15 +431,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
       // single component is always independent
       #if vtkNumComponents == 1
-      vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, 0.5));
-      tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, 0.5)).r;
+      vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0_0 + cshift0_0, 0.5));
+      tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0_0 + oshift0_0, 0.5)).r;
       #endif
 
       #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
       vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, height0));
-      tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, height0)).r;
+      tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0_0, height0)).r;
       vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1 + cshift1, height1)).rgb;
-      tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1 + oshift1, height1)).r;
+      tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1 + oshift1_0, height1)).r;
       #if vtkNumComponents >= 3
       vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2 + cshift2, height2)).rgb;
       tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2 + oshift2, height2)).r;
@@ -452,7 +452,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       #else // then not independent
       #if vtkNumComponents == 2
       float lum = tValue.r * cscale0 + cshift0;
-      float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1, 0.5)).r;
+      float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1_0, 0.5)).r;
       vec4 tColor = vec4(lum, lum, lum, alpha);
       #endif
       #if vtkNumComponents == 3
@@ -596,7 +596,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vPlaneNormal1_${i}, vPlaneDistance1_${i}, dists, vPlaneNormal2_${i}, vPlaneNormal4_${i},
         vSize.y, vSize.z);
         getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
-        vPlaneNormal2_${i}, vPlaneDistance2_${i}, dists, vPlaneNormal0, vPlaneNormal4_${i},
+        vPlaneNormal2_${i}, vPlaneDistance2_${i}, dists, vPlaneNormal0_${i}, vPlaneNormal4_${i},
         vSize.x, vSize.z);
         getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
         vPlaneNormal3_${i}, vPlaneDistance3_${i}, dists, vPlaneNormal0_${i}, vPlaneNormal4_${i},
@@ -768,114 +768,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
       // define vtkLightComplexity
       //VTK::LightComplexity
-      #if vtkLightComplexity > 0
-      uniform float vSpecularPower;
-      uniform float vAmbient;
-      uniform float vDiffuse;
-      uniform float vSpecular;
-      //VTK::Light::Dec
-      #endif
-
-      // possibly define vtkGradientOpacityOn
-      //VTK::GradientOpacityOn
-      #ifdef vtkGradientOpacityOn
-      uniform float goscale0;
-      uniform float goshift0;
-      uniform float gomin0;
-      uniform float gomax0;
-      #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-      uniform float goscale1;
-      uniform float goshift1;
-      uniform float gomin1;
-      uniform float gomax1;
-      #if vtkNumComponents >= 3
-      uniform float goscale2;
-      uniform float goshift2;
-      uniform float gomin2;
-      uniform float gomax2;
-      #endif
-      #if vtkNumComponents >= 4
-      uniform float goscale3;
-      uniform float goshift3;
-      uniform float gomin3;
-      uniform float gomax3;
-      #endif
-      #endif
-      #endif
 
       // values describing the volume geometry
       ${uniformDefinitions}
-      uniform vec3 vOriginVC;
-      uniform vec3 vSpacing;
-      uniform ivec3 volumeDimensions; // 3d texture dimensions
-      uniform vec3 vPlaneNormal0;
-      uniform float vPlaneDistance0;
-      uniform vec3 vPlaneNormal1;
-      uniform float vPlaneDistance1;
-      uniform vec3 vPlaneNormal2;
-      uniform float vPlaneDistance2;
-      uniform vec3 vPlaneNormal3;
-      uniform float vPlaneDistance3;
-      uniform vec3 vPlaneNormal4;
-      uniform float vPlaneDistance4;
-      uniform vec3 vPlaneNormal5;
-      uniform float vPlaneDistance5;
-      uniform float oshift0;
-      uniform float oscale0;
-      uniform float cshift0;
-      uniform float cscale0;
-      uniform vec3 vVCToIJK;
-
-      // the heights defined below are the locations
-      // for the up to four components of the tfuns
-      // the tfuns have a height of 2XnumComps pixels so the
-      // values are computed to hit the middle of the two rows
-      // for that component
-      #ifdef vtkIndependentComponentsOn
-      #if vtkNumComponents == 2
-      uniform float mix0;
-      uniform float mix1;
-      #define height0 0.25
-      #define height1 0.75
-      #endif
-      #if vtkNumComponents == 3
-      uniform float mix0;
-      uniform float mix1;
-      uniform float mix2;
-      #define height0 0.17
-      #define height1 0.5
-      #define height2 0.83
-      #endif
-      #if vtkNumComponents == 4
-      uniform float mix0;
-      uniform float mix1;
-      uniform float mix2;
-      uniform float mix3;
-      #define height0 0.125
-      #define height1 0.375
-      #define height2 0.625
-      #define height3 0.875
-      #endif
-      #endif
-
-      #if vtkNumComponents >= 2
-      uniform float oshift1;
-      uniform float oscale1;
-      uniform float cshift1;
-      uniform float cscale1;
-      #endif
-      #if vtkNumComponents >= 3
-      uniform float oshift2;
-      uniform float oscale2;
-      uniform float cshift2;
-      uniform float cscale2;
-      #endif
-      #if vtkNumComponents >= 4
-      uniform float oshift3;
-      uniform float oscale3;
-      uniform float cshift3;
-      uniform float cscale3;
-      #endif
 
       // declaration for intermixed geometry
       //VTK::ZBuffer::Dec
@@ -888,121 +783,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ${computeMat4Normal}
       ${computeGradientOpacityFactor}
       ${applyLighting}
-
       ${getColorForValue}
-      // Given a texture value compute the color and opacity
-      vec4 getColorForValue(vec4 tValue, vec3 posIS, vec3 tstep)
-      {
-        // compute the normal and gradient magnitude if needed
-        // We compute it as a vec4 if possible otherwise a mat4
-        //
-        vec4 goFactor = vec4(1.0,1.0,1.0,1.0);
-
-        // compute the normal vectors as needed
-        #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
-        #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-        mat4 normalMat = computeMat4Normal_0(posIS, tValue, tstep);
-        vec4 normal0 = normalMat[0];
-        vec4 normal1 = normalMat[1];
-        #if vtkNumComponents > 2
-        vec4 normal2 = normalMat[2];
-        #endif
-        #if vtkNumComponents > 3
-        vec4 normal3 = normalMat[3];
-        #endif
-        #else
-        vec4 normal0 = computeNormal_0(posIS, tValue.a, tstep);
-        #endif
-        #endif
-
-        // compute gradient opacity factors as needed
-        #if defined(vtkGradientOpacityOn)
-        goFactor.x =
-        computeGradientOpacityFactor_0(normal0, goscale0, goshift0, gomin0, gomax0);
-        #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-        goFactor.y =
-        computeGradientOpacityFactor_0(normal1, goscale1, goshift1, gomin1, gomax1);
-        #if vtkNumComponents > 2
-        goFactor.z =
-        computeGradientOpacityFactor_0(normal2, goscale2, goshift2, gomin2, gomax2);
-        #if vtkNumComponents > 3
-        goFactor.w =
-        computeGradientOpacityFactor_0(normal3, goscale3, goshift3, gomin3, gomax3);
-        #endif
-        #endif
-        #endif
-        #endif
-
-        // single component is always independent
-        #if vtkNumComponents == 1
-        vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, 0.5));
-        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, 0.5)).r;
-        #endif
-
-        #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-        vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, height0));
-        tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0, height0)).r;
-        vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1 + cshift1, height1)).rgb;
-        tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1 + oshift1, height1)).r;
-        #if vtkNumComponents >= 3
-        vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2 + cshift2, height2)).rgb;
-        tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2 + oshift2, height2)).r;
-        #if vtkNumComponents >= 4
-        vec3 tColor3 = mix3*texture2D(ctexture, vec2(tValue.a * cscale3 + cshift3, height3)).rgb;
-        tColor.a += goFactor.w*mix3*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, height3)).r;
-        #endif
-        #endif
-
-        #else // then not independent
-        #if vtkNumComponents == 2
-        float lum = tValue.r * cscale0 + cshift0;
-        float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1, 0.5)).r;
-        vec4 tColor = vec4(lum, lum, lum, alpha);
-        #endif
-        #if vtkNumComponents == 3
-        vec4 tColor;
-        tColor.r = tValue.r * cscale0 + cshift0;
-        tColor.g = tValue.g * cscale1 + cshift1;
-        tColor.b = tValue.b * cscale2 + cshift2;
-        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale0 + oshift0, 0.5)).r;
-        #endif
-        #if vtkNumComponents == 4
-        vec4 tColor;
-        tColor.r = tValue.r * cscale0 + cshift0;
-        tColor.g = tValue.g * cscale1 + cshift1;
-        tColor.b = tValue.b * cscale2 + cshift2;
-        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, 0.5)).r;
-        #endif
-        #endif // dependent
-
-        // apply lighting if requested as appropriate
-        #if vtkLightComplexity > 0
-        applyLighting_0(tColor.rgb, normal0);
-        #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-        applyLighting_0(tColor1, normal1);
-        #if vtkNumComponents >= 3
-        applyLighting_0(tColor2, normal2);
-        #if vtkNumComponents >= 4
-        applyLighting_0(tColor3, normal3);
-        #endif
-        #endif
-        #endif
-        #endif
-
-        // perform final independent blend as needed
-        #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-        tColor.rgb += tColor1;
-        #if vtkNumComponents >= 3
-        tColor.rgb += tColor2;
-        #if vtkNumComponents >= 4
-        tColor.rgb += tColor3;
-        #endif
-        #endif
-        #endif
-
-        return tColor;
-      }
-
       ${applyBlend}
       ${getRayPointIntersectionBounds}
       ${computeRayDistances}
@@ -1638,7 +1419,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       const oscale = sscale / (oRange[1] - oRange[0]);
       const oshift = (volInfo.offset[i] - oRange[0]) / (oRange[1] - oRange[0]);
       program.setUniformf(`oshift${i}`, oshift);
+      program.setUniformf(`oshift${i}_0`, oshift);
       program.setUniformf(`oscale${i}`, oscale);
+      program.setUniformf(`oscale${i}_0`, oscale);
 
       const cfun = vprop.getRGBTransferFunction(target);
       const cRange = cfun.getRange();
@@ -1646,7 +1429,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         `cshift${i}`,
         (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0])
       );
+      program.setUniformf(
+        `cshift${i}_0`,
+        (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0])
+      );
       program.setUniformf(`cscale${i}`, sscale / (cRange[1] - cRange[0]));
+      program.setUniformf(`cscale${i}_0`, sscale / (cRange[1] - cRange[0]));
     }
 
     if (model.gopacity) {
@@ -1714,6 +1502,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniformf('vDiffuse', vprop.getDiffuse());
       program.setUniformf('vSpecular', vprop.getSpecular());
       program.setUniformf('vSpecularPower', vprop.getSpecularPower());
+
+      program.setUniformf('vAmbient_0', vprop.getAmbient());
+      program.setUniformf('vDiffuse_0', vprop.getDiffuse());
+      program.setUniformf('vSpecular_0', vprop.getSpecular());
+      program.setUniformf('vSpecularPower_0', vprop.getSpecularPower());
     }
   };
 
