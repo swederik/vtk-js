@@ -1342,10 +1342,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const keyMats = model.openGLCamera.getKeyMatrices(ren);
     publicAPI.getKeyMatrices(actors);
 
-    const actMats = model.perVol[0].actMats;
-
-    mat4.multiply(model.modelToView, keyMats.wcvc, actMats.mcwc);
-
     const program = cellBO.getProgram();
 
     const cam = model.openGLCamera.getRenderable();
@@ -1440,28 +1436,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniformi('cameraParallel', cam.getParallelProjection());
     }
 
-    const viewToWorldMatrix = mat4.create();
-    mat4.invert(viewToWorldMatrix, keyMats.wcvc);
-
-    const closestPoint = vec4.create();
-    vec4.set(closestPoint, points[0][0], points[0][1], points[0][2], 1.0);
-
-    const furthestPoint = vec4.create();
-    vec4.set(furthestPoint, points[1][0], points[1][1], points[1][2], 1.0);
-
-    const out1 = vec4.create();
-    vec4.transformMat4(out1, closestPoint, keyMats.wcvc);
-
-    const out2 = vec4.create();
-    vec4.transformMat4(out2, furthestPoint, keyMats.wcvc);
-
     program.setUniformMatrix('worldToViewMatrix', keyMats.wcvc);
-    program.setUniformMatrix('viewToIndexMatrix', model.vie);
 
     actors.forEach((actor, volIdx) => {
       const imageData = actor.getMapper().getInputData();
       const ext = imageData.getExtent();
       const spc = imageData.getSpacing();
+      const idxToView = mat4.create();
+      const modelToView = mat4.create();
+      const idxNormalMatrix = mat3.create();
+      const actMats = model.perVol[volIdx].actMats;
+
+      mat4.multiply(modelToView, keyMats.wcvc, actMats.mcwc);
 
       const vsize = vec3.create();
       vec3.set(
@@ -1475,23 +1461,19 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       vec3.set(pos, ext[0], ext[2], ext[4]);
       imageData.indexToWorldVec3(pos, pos);
 
-      vec3.transformMat4(pos, pos, model.modelToView);
+      vec3.transformMat4(pos, pos, modelToView);
       program.setUniform3f(`vOriginVC_${volIdx}`, pos[0], pos[1], pos[2]);
 
       // apply the image directions
       const i2wmat4 = imageData.getIndexToWorld();
-      mat4.multiply(model.idxToView, model.modelToView, i2wmat4);
+      mat4.multiply(idxToView, modelToView, i2wmat4);
 
       mat3.multiply(
-        model.idxNormalMatrix,
+        idxNormalMatrix,
         keyMats.normalMatrix,
         actMats.normalMatrix
       );
-      mat3.multiply(
-        model.idxNormalMatrix,
-        model.idxNormalMatrix,
-        model.currentInput.getDirection()
-      );
+      mat3.multiply(idxNormalMatrix, idxNormalMatrix, imageData.getDirection());
 
       const sampleDist = 1; // model.renderable.getSampleDistance();
       const maxSamples = vec3.length(vsize) / 1;
@@ -1523,7 +1505,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
 
       const viewToIndex = mat4.create();
-      mat4.invert(viewToIndex, model.idxToView);
+      mat4.invert(viewToIndex, idxToView);
 
       program.setUniformMatrix(`viewToIndex_${volIdx}`, viewToIndex);
 
@@ -1559,8 +1541,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             vec3.set(pos2, ext[0], ext[2], ext[4]);
             break;
         }
-        vec3.transformMat3(normal, normal, model.idxNormalMatrix);
-        vec3.transformMat4(pos2, pos2, model.idxToView);
+        vec3.transformMat3(normal, normal, idxNormalMatrix);
+        vec3.transformMat4(pos2, pos2, idxToView);
         const dist = -1.0 * vec3.dot(pos2, normal);
 
         // we have the plane in view coordinates
@@ -2112,12 +2094,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
     const actor = actors[0];
     publicAPI.invokeEvent({ type: 'StartEvent' });
-    // model.renderable.update();
 
+    // TODO: Remove this everywhere it is currently used
     model.currentInput = actor.getMapper().getInputData();
     publicAPI.invokeEvent({ type: 'EndEvent' });
 
-    if (!model.currentInput) {
+    if (!actors || !actors.length) {
       vtkErrorMacro('No input!');
       return;
     }
@@ -2608,7 +2590,6 @@ const DEFAULT_VALUES = {
   fullViewportTime: 1.0,
   idxToView: null,
   idxNormalMatrix: null,
-  modelToView: null,
   displayToView: null,
   avgWindowArea: 0.0,
   avgFrameTime: 0.0,
@@ -2640,9 +2621,6 @@ export function extend(publicAPI, model, initialValues = {}) {
   model.jitterTexture.setWrapT(Wrap.REPEAT);
   model.framebuffer = vtkOpenGLFramebuffer.newInstance();
 
-  model.idxToView = mat4.create();
-  model.idxNormalMatrix = mat3.create();
-  model.modelToView = mat4.create();
   model.displayToView = mat4.create();
   model.displayToWorld = mat4.create();
 
