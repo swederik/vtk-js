@@ -1236,83 +1236,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       }
 
       ${computeRayDistances}
-      // given a
-      // - ray direction (rayDir)
-      // - starting point (vertexVCVSOutput)
-      // - bounding planes of the volume
-      // - optionally depth buffer values
-      // - far clipping plane
-      // compute the start/end distances of the ray we need to cast
-      vec2 computeRayDistances(vec3 rayDir, vec3 tdims)
-      {
-        vec2 dists = vec2(100.0*camFar, -1.0);
-
-        vec3 vSize = vSpacing*(tdims - 1.0);
-
-        // all this is in View Coordinates
-        getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-        vPlaneNormal0, vPlaneDistance0, dists, vPlaneNormal2, vPlaneNormal4,
-        vSize.y, vSize.z);
-        getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-        vPlaneNormal1, vPlaneDistance1, dists, vPlaneNormal2, vPlaneNormal4,
-        vSize.y, vSize.z);
-        getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-        vPlaneNormal2, vPlaneDistance2, dists, vPlaneNormal0, vPlaneNormal4,
-        vSize.x, vSize.z);
-        getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-        vPlaneNormal3, vPlaneDistance3, dists, vPlaneNormal0, vPlaneNormal4,
-        vSize.x, vSize.z);
-        getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-        vPlaneNormal4, vPlaneDistance4, dists, vPlaneNormal0, vPlaneNormal2,
-        vSize.x, vSize.y);
-        getRayPointIntersectionBounds(vertexVCVSOutput, rayDir,
-        vPlaneNormal5, vPlaneDistance5, dists, vPlaneNormal0, vPlaneNormal2,
-        vSize.x, vSize.y);
-
-        // do not go behind front clipping plane
-        dists.x = max(0.0,dists.x);
-
-        // do not go PAST far clipping plane
-        float farDist = -camThick/rayDir.z;
-        dists.y = min(farDist,dists.y);
-
-        // Do not go past the zbuffer value if set
-        // This is used for intermixing opaque geometry
-        //VTK::ZBuffer::Impl
-
-        return dists;
-      }
-
       ${computeIndexSpaceValues}
-      // Compute the index space starting position (pos) and end
-      // position
-      //
-      void computeIndexSpaceValues(out vec3 pos, out vec3 endPos, out float sampleDistanceIS, vec3 rayDir, vec2 dists)
-      {
-        // compute starting and ending values in volume space
-        pos = vertexVCVSOutput + dists.x*rayDir;
-        pos = pos - vOriginVC;
-        // convert to volume basis and origin
-        pos = vec3(
-        dot(pos, vPlaneNormal0),
-        dot(pos, vPlaneNormal2),
-        dot(pos, vPlaneNormal4));
-
-        endPos = vertexVCVSOutput + dists.y*rayDir;
-        endPos = endPos - vOriginVC;
-        endPos = vec3(
-        dot(endPos, vPlaneNormal0),
-        dot(endPos, vPlaneNormal2),
-        dot(endPos, vPlaneNormal4));
-
-        float delta = length(endPos - pos);
-
-        pos *= vVCToIJK;
-        endPos *= vVCToIJK;
-
-        float delta2 = length(endPos - pos);
-        sampleDistanceIS = sampleDistance*delta2/delta;
-      }
 
       void main() {
         vec3 rayDirVC;
@@ -1325,10 +1249,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           rayDirVC = normalize(vertexVCVSOutput);
         }
 
-        vec3 tdims = vec3(volumeDimensions);
+        vec3 tdims = vec3(volumeDimensions_0);
 
         // compute the start and end points for the ray
-        vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC, tdims);
+        vec2 rayStartEndDistancesVC = computeRayDistances_0(rayDirVC, tdims);
 
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
