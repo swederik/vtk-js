@@ -1,6 +1,6 @@
 /* eslint no-debugger: 0 no-unused-vars:0  */
 import macro from 'vtk.js/Sources/macro';
-import { vec3, mat3, mat4 } from 'gl-matrix';
+import { vec3, vec4, mat3, mat4 } from 'gl-matrix';
 // import vtkBoundingBox       from 'vtk.js/Sources/Common/DataModel/BoundingBox';
 import vtkDataArray from 'vtk.js/Sources/Common/Core/DataArray';
 import { VtkDataTypes } from 'vtk.js/Sources/Common/Core/DataArray/Constants';
@@ -772,6 +772,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const min = distances[0].vertex;
     const max = distances[distances.length - 1].vertex;
 
+    console.log(min, max);
+
     return [min, max];
   }
 
@@ -827,11 +829,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         
         vec3 posVC = rayStartEndDistancesVC.x * rayDirVC;
         vec3 endVC = rayStartEndDistancesVC.y * rayDirVC;
-
+        
+        vec3 lenPos1 = (worldToViewMatrix * vec4(0.0, 0.0, 0.0, 0.0)).xyz; 
+        vec3 lenPos2 = (worldToViewMatrix * vec4(smallestVoxelSize, 0.0, 0.0, 0.0)).xyz;
+        float deltaLen = length(lenPos2 - lenPos1);
+        
         // start slightly inside and apply some jitter
         vec3 delta = endVC - posVC;
-        vec3 step = normalize(delta) * smallestVoxelSize;
-        float raySteps = length(delta) / smallestVoxelSize;
+        vec3 step = normalize(delta) * deltaLen;
+        float raySteps = 1000.0; // length(delta) / deltaLen;
   
         // avoid 0.0 jitter
         float jitter = 0.01 + 0.99*texture2D(jtexture, gl_FragCoord.xy/32.0).r;
@@ -844,19 +850,21 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         
         vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
         vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
+        vec3 tpos = pos / vec3(volumeDimensions_${i});
+        
         bool isInside;
          
-        isInside = isInsideTexture_${i}(pos);
+        isInside = isInsideTexture_${i}(tpos);
         if (isInside == true) {
           // Perform initial step at the volume boundary
           // compute the scalar
-          tValue = getTextureValue_${i}(pos);
+          tValue = getTextureValue_${i}(tpos);
     
           // COMPOSITE_BLEND
           // now map through opacity and color
-          tColor = getColorForValue_${i}(tValue, pos);
-        }      
-  
+          tColor = getColorForValue_${i}(tValue, tpos);
+        }
+                
         // handle very thin volumes
         if (raySteps <= 1.0) {
           tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
@@ -874,15 +882,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     
           vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
           vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
-          isInside = isInsideTexture_${i}(pos);
+          vec3 tpos = pos / vec3(volumeDimensions_${i});
+          isInside = isInsideTexture_${i}(tpos);
+          float mix = (1.0 - color.a);
           if (isInside == true) {
             // compute the scalar
             tValue = getTextureValue_${i}(pos);
       
             // now map through opacity and color
             tColor = getColorForValue_${i}(tValue, pos);
-      
-            float mix = (1.0 - color.a);
       
             color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
           }
@@ -897,16 +905,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     
           vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
           vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
-          isInside = isInsideTexture_${i}(pos);
+          vec3 tpos = pos / vec3(volumeDimensions_${i});
+          float mix = (1.0 - color.a);
+          isInside = isInsideTexture_${i}(tpos);
+          
           if (isInside == true) {
             // compute the scalar
-            tValue = getTextureValue_${i}(pos);
+            tValue = getTextureValue_${i}(tpos);
       
             // now map through opacity and color
-            tColor = getColorForValue_${i}(tValue, pos);
+            tColor = getColorForValue_${i}(tValue, tpos);
             tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps - stepsTraveled);
       
-            float mix = (1.0 - color.a);
             color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
           }
         }
@@ -918,7 +928,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   function getIsInsideTexture(i) {
     return `
       bool isInsideTexture_${i}(vec3 pos) {
-          return (pos.x < 0.0 || pos.y < 0.0 || pos.z < 0.0 ||
+          return !(pos.x < 0.0 || pos.y < 0.0 || pos.z < 0.0 ||
               pos.x > float(volumeDimensions_${i}.x) ||
               pos.y > float(volumeDimensions_${i}.y) ||
               pos.z > float(volumeDimensions_${i}.z));
@@ -943,7 +953,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       uniform sampler2D jtexture;
       uniform float sampleDistance;
       
-      uniform mat4 viewToWorldMatrix;
+      uniform mat4 worldToViewMatrix;
       uniform vec3 cameraDOP;
       uniform vec3 closestPoint;
       uniform vec3 furthestPoint;
@@ -1017,7 +1027,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ${applyBlend}
       
       float getPlaneConstantFromNormalAndCoplanarPoint(vec3 normal, vec3 point) {
-        return -dot(normal, point);
+        return -dot(point, normal);
       }
       
       float getPointToPlaneDistance(vec3 planeNormal, float planeConstant, vec3 point) {
@@ -1033,16 +1043,17 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vec3 cameraPositionVC = vec3(0.0, 0.0, 0.0);
         
         vec4 closestPointV4 = vec4(closestPoint.x, closestPoint.y, closestPoint.z, 1.0); 
-        vec3 closestPointVC = (viewToWorldMatrix * closestPointV4).xyz;
+        vec3 closestPointVC = (worldToViewMatrix * closestPointV4).xyz;
         
         vec4 furthestPointV4 = vec4(furthestPoint.x, furthestPoint.y, furthestPoint.z, 1.0); 
-        vec3 furthestPointVC = (viewToWorldMatrix * furthestPointV4).xyz;
+        vec3 furthestPointVC = (worldToViewMatrix * furthestPointV4).xyz;
         
         float closestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, closestPointVC);
         float furthestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, furthestPointVC);
         
-        dists.x = max(dists.x, getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC));
-        dists.y = min(dists.y, getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC));
+        // X is close, Y is far
+        dists.x = min(dists.x, getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC));
+        dists.y = max(dists.y, getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC));
         
         // do not go behind front clipping plane
         dists.x = max(0.0, dists.x);
@@ -1074,8 +1085,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
-        if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
-          discard;
+        if (rayStartEndDistancesVC.y >= rayStartEndDistancesVC.x) {
+          gl_FragData[0] = vec4(0.0, 0.0, 1.0, 0.5);
+          return;
+          // discard;
         }
 
         // IS = Index Space
@@ -1514,7 +1527,24 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const viewToWorldMatrix = mat4.create();
     mat4.invert(viewToWorldMatrix, keyMats.wcvc);
 
-    program.setUniformMatrix('viewToWorldMatrix', viewToWorldMatrix);
+    // vec4 furthestPointV4 = vec4(furthestPoint.x, furthestPoint.y, furthestPoint.z, 1.0);
+    //         vec3 furthestPointVC = (worldToViewMatrix * furthestPointV4).xyz;
+    //
+    //         float closestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, closestPointVC);
+    //         float furthestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, furthestPointVC);
+    const closestPoint = vec4.create();
+    vec4.set(closestPoint, points[0][0], points[0][1], points[0][2], 1.0);
+
+    const furthestPoint = vec4.create();
+    vec4.set(furthestPoint, points[1][0], points[1][1], points[1][2], 1.0);
+
+    const out1 = vec4.create();
+    vec4.transformMat4(out1, closestPoint, keyMats.wcvc);
+
+    const out2 = vec4.create();
+    vec4.transformMat4(out2, furthestPoint, keyMats.wcvc);
+
+    program.setUniformMatrix('worldToViewMatrix', keyMats.wcvc);
     program.setUniformMatrix('viewToIndexMatrix', model.vie);
 
     actors.forEach((actor, volIdx) => {
@@ -1572,6 +1602,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vctoijk[1],
         vctoijk[2]
       );
+
       program.setUniform3i(
         `volumeDimensions_${volIdx}`,
         dims[0],

@@ -94,7 +94,7 @@ renderer.resetCamera();
 const dop = vec3.create();
 vec3.set(dop, 0.5, 0.5, 0.5);
 vec3.normalize(dop, dop);
-console.log(dop);
+
 renderer.getActiveCamera().setDirectionOfProjection(dop[0], dop[1], dop[2]);
 renderer.getActiveCamera().setParallelProjection(true);
 renderer.resetCamera();
