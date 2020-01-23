@@ -628,7 +628,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const i = 0;
     // Apply the specified blend mode operation along the ray's path.
     return `
-      void applyBlend_Dynamic(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
+      void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
       {
         vec3 tstep = 1.0/tdims;
   
@@ -1125,116 +1125,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       }
 
       ${applyBlend}
-      // Apply the specified blend mode operation along the ray's path.
-      void applyBlend(vec3 posIS, vec3 endIS, float sampleDistanceIS, vec3 tdims)
-      {
-        vec3 tstep = 1.0/tdims;
-
-        // start slightly inside and apply some jitter
-        vec3 delta = endIS - posIS;
-        vec3 stepIS = normalize(delta)*sampleDistanceIS;
-        float raySteps = length(delta)/sampleDistanceIS;
-
-        // avoid 0.0 jitter
-        float jitter = 0.01 + 0.99*texture2D(jtexture, gl_FragCoord.xy/32.0).r;
-        float stepsTraveled = jitter;
-
-        // local vars for the loop
-        vec4 color = vec4(0.0, 0.0, 0.0, 0.0);
-        vec4 tValue;
-        vec4 tColor;
-
-        // Perform initial step at the volume boundary
-        // compute the scalar
-        tValue = getTextureValue(posIS);
-
-        // COMPOSITE_BLEND
-        // now map through opacity and color
-        tColor = getColorForValue(tValue, posIS, tstep);
-
-        // handle very thin volumes
-        if (raySteps <= 1.0) {
-          tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
-          gl_FragData[0] = tColor;
-          return;
-        }
-
-        tColor.a = 1.0 - pow(1.0 - tColor.a, jitter);
-        color = vec4(tColor.rgb*tColor.a, tColor.a);
-        posIS += (jitter*stepIS);
-
-        for (int i = 0; i < //VTK::MaximumSamplesValue ; ++i) {
-          if (stepsTraveled + 1.0 >= raySteps) { break; }
-
-          // compute the scalar
-          tValue = getTextureValue(posIS);
-
-          // now map through opacity and color
-          tColor = getColorForValue(tValue, posIS, tstep);
-
-          float mix = (1.0 - color.a);
-
-          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
-          stepsTraveled++;
-          posIS += stepIS;
-          if (color.a > 0.99) { color.a = 1.0; break; }
-        }
-
-        if (color.a < 0.99 && (raySteps - stepsTraveled) > 0.0) {
-          posIS = endIS;
-
-          // compute the scalar
-          tValue = getTextureValue(posIS);
-
-          // now map through opacity and color
-          tColor = getColorForValue(tValue, posIS, tstep);
-          tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps - stepsTraveled);
-
-          float mix = (1.0 - color.a);
-          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
-        }
-
-        gl_FragData[0] = vec4(color.rgb/color.a, color.a);
-      }
-
       ${getRayPointIntersectionBounds}
-      // Compute a new start and end point for a given ray based
-      // on the provided bounded clipping plane (aka a rectangle)
-      void getRayPointIntersectionBounds(
-      vec3 rayPos, vec3 rayDir,
-      vec3 planeDir, float planeDist,
-      inout vec2 tbounds, vec3 vPlaneX, vec3 vPlaneY,
-      float vSize1, float vSize2)
-      {
-        float result = dot(rayDir, planeDir);
-        if (result == 0.0)
-        {
-          return;
-        }
-        result = -1.0 * (dot(rayPos, planeDir) + planeDist) / result;
-        vec3 xposVC = rayPos + rayDir*result;
-        vec3 vxpos = xposVC - vOriginVC;
-        vec2 vpos = vec2(
-        dot(vxpos, vPlaneX),
-        dot(vxpos, vPlaneY));
-
-        // on some apple nvidia systems this does not work
-        // if (vpos.x < 0.0 || vpos.x > vSize1 ||
-        //     vpos.y < 0.0 || vpos.y > vSize2)
-        // even just
-        // if (vpos.x < 0.0 || vpos.y < 0.0)
-        // fails
-        // so instead we compute a value that represents in and out
-        //and then compute the return using this value
-        float xcheck = max(0.0, vpos.x * (vpos.x - vSize1)); //  0 means in bounds
-        float check = sign(max(xcheck, vpos.y * (vpos.y - vSize2))); //  0 means in bounds, 1 = out
-
-        tbounds = mix(
-        vec2(min(tbounds.x, result), max(tbounds.y, result)), // in value
-        tbounds, // out value
-        check);  // 0 in 1 out
-      }
-
       ${computeRayDistances}
       ${computeIndexSpaceValues}
 
