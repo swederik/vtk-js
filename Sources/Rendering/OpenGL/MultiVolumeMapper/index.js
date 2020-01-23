@@ -385,117 +385,178 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   }
 
   function getGetColorForValue(i, numComp) {
+    const vtkIndependentComponentsOn = false;
+    let normalMatAndVecDefinitions = '';
+    if (vtkIndependentComponentsOn && numComp > 1) {
+      if (numComp > 1) {
+        normalMatAndVecDefinitions += `
+        mat4 normalMat = computeMat4Normal_${i}(posIS, tValue, tstep);
+        vec4 normal0 = normalMat[0];
+        vec4 normal1 = normalMat[1];
+      `;
+      }
+
+      if (numComp > 2) {
+        normalMatAndVecDefinitions += `
+        vec4 normal2 = normalMat[2];
+      `;
+      }
+
+      if (numComp > 3) {
+        normalMatAndVecDefinitions += `
+        vec4 normal3 = normalMat[3];
+      `;
+      }
+    } else {
+      normalMatAndVecDefinitions += `vec4 normal0 = computeNormal_${i}(posIS, tValue.a, tstep);`;
+    }
+
+    const normalVectors = `
+    #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
+      ${normalMatAndVecDefinitions}
+    #endif
+    `;
+
+    let gradientOpacityFactors = '';
+    if (model.perVol[i].gopacity) {
+      gradientOpacityFactors += ` 
+        goFactor.x =
+          computeGradientOpacityFactor_${i}(normal0, goscale0_${i}, goshift0_${i}, gomin0_${i}, gomax0_${i});
+      `;
+
+      if (vtkIndependentComponentsOn) {
+        if (numComp > 1) {
+          gradientOpacityFactors += `
+            goFactor.y =
+            computeGradientOpacityFactor_${i}(normal1, goscale1_${i}, goshift1_${i}, gomin1_${i}, gomax1_${i});
+          `;
+        }
+        if (numComp > 2) {
+          gradientOpacityFactors += `
+            goFactor.z =
+            computeGradientOpacityFactor_${i}(normal2, goscale2_${i}, goshift2_${i}, gomin2_${i}, gomax2_${i});
+          `;
+        }
+        if (numComp > 3) {
+          gradientOpacityFactors += `
+            goFactor.w =
+            computeGradientOpacityFactor_${i}(normal3, goscale3_${i}, goshift3_${i}, gomin3_${i}, gomax3_${i});
+          `;
+        }
+      }
+    }
+
+    let tColor = '';
+    if (numComp === 1) {
+      // single component is always independent
+      tColor += `
+        vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0_${i} + cshift0_${i}, 0.5));
+        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0_${i} + oshift0_${i}, 0.5)).r;
+      `;
+    } else if (vtkIndependentComponentsOn && numComp >= 2) {
+      tColor += `
+      vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0_${i} + cshift0_${i}, height0_${i}));
+      tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0_${i} + oshift0_${i}, height0_${i})).r;
+      vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1_${i} + cshift1_${i}, height1_${i})).rgb;
+      tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1_${i} + oshift1_${i}, height1_${i})).r;`;
+
+      if (numComp >= 3) {
+        tColor += `
+        vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2_${i} + cshift2_${i}, height2_${i})).rgb;
+        tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2_${i} + oshift2_${i}, height2_${i})).r;`;
+      }
+
+      if (numComp >= 4) {
+        tColor += `
+        vec3 tColor3 = mix3*texture2D(ctexture, vec2(tValue.a * cscale3_${i} + cshift3_${i}, height3_${i})).rgb;
+        tColor.a += goFactor.w*mix3*texture2D(otexture, vec2(tValue.a * oscale3_${i} + oshift3_${i}, height3_${i})).r;`;
+      }
+    } else if (numComp === 2) {
+      // not independent
+      tColor += `
+        float lum = tValue.r * cscale0_${i} + cshift0_${i};
+        float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1_${i} + oshift1_${i}, 0.5)).r;
+        vec4 tColor = vec4(lum, lum, lum, alpha);
+        `;
+    } else if (numComp === 3) {
+      // not independent
+      tColor += `
+        tColor.r = tValue.r * cscale0_${i} + cshift0_${i};
+        tColor.g = tValue.g * cscale1_${i} + cshift1_${i};
+        tColor.b = tValue.b * cscale2_${i} + cshift2_${i};
+        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale0_${i} + oshift0_${i}, 0.5)).r;
+        `;
+    } else if (numComp === 4) {
+      // not independent
+      tColor += `
+          tColor.r = tValue.r * cscale0_${i} + cshift0_${i};
+          tColor.g = tValue.g * cscale1_${i} + cshift1_${i};
+          tColor.b = tValue.b * cscale2_${i} + cshift2_${i};
+          tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale3_${i} + oshift3_${i}, 0.5)).r;
+        `;
+    }
+
+    let applyLighting = `
+      #if defined(vtkLightComplexity) && vtkLightComplexity > 0
+      
+      applyLighting_${i}(tColor.rgb, normal0);
+    `;
+
+    if (vtkIndependentComponentsOn && numComp >= 2) {
+      applyLighting += `
+          applyLighting_${i}(tColor1, normal1);
+        `;
+      if (numComp >= 3) {
+        applyLighting += `
+          applyLighting_${i}(tColor2, normal2);
+        `;
+      }
+
+      if (numComp >= 4) {
+        applyLighting += `
+          applyLighting_${i}(tColor3, normal3);
+        `;
+      }
+    }
+
+    applyLighting += `#endif
+    `;
+
+    let finalIndependentBlend = '';
+    if (vtkIndependentComponentsOn && numComp >= 2) {
+      finalIndependentBlend += `
+        tColor.rgb += tColor1;
+      `;
+
+      if (numComp >= 3) {
+        finalIndependentBlend += `
+          tColor.rgb += tColor2;
+        `;
+      }
+
+      if (numComp >= 4) {
+        finalIndependentBlend += `
+          tColor.rgb += tColor3;
+        `;
+      }
+    }
+
     // Given a texture value compute the color and opacity
     const getColorForValue = `
     vec4 getColorForValue_${i}(vec4 tValue, vec3 posIS, vec3 tstep)
     {
       // compute the normal and gradient magnitude if needed
       // We compute it as a vec4 if possible otherwise a mat4
-      //
       vec4 goFactor = vec4(1.0,1.0,1.0,1.0);
-
       // compute the normal vectors as needed
-      #if (vtkLightComplexity > 0) || defined(vtkGradientOpacityOn)
-      #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-      mat4 normalMat = computeMat4Normal_${i}(posIS, tValue, tstep);
-      vec4 normal0 = normalMat[0];
-      vec4 normal1 = normalMat[1];
-      #if vtkNumComponents > 2
-      vec4 normal2 = normalMat[2];
-      #endif
-      #if vtkNumComponents > 3
-      vec4 normal3 = normalMat[3];
-      #endif
-      #else
-      vec4 normal0 = computeNormal_${i}(posIS, tValue.a, tstep);
-      #endif
-      #endif
-
+      ${normalVectors}
       // compute gradient opacity factors as needed
-      #if defined(vtkGradientOpacityOn)
-      goFactor.x =
-        computeGradientOpacityFactor_${i}(normal0, goscale0, goshift0, gomin0, gomax0);
-      #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
-      goFactor.y =
-        computeGradientOpacityFactor_${i}(normal1, goscale1, goshift1, gomin1, gomax1);
-      #if vtkNumComponents > 2
-      goFactor.z =
-        computeGradientOpacityFactor_${i}(normal2, goscale2, goshift2, gomin2, gomax2);
-      #if vtkNumComponents > 3
-      goFactor.w =
-        computeGradientOpacityFactor_${i}(normal3, goscale3, goshift3, gomin3, gomax3);
-      #endif
-      #endif
-      #endif
-      #endif
-
-      // single component is always independent
-      #if vtkNumComponents == 1
-      vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0_0 + cshift0_0, 0.5));
-      tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0_0 + oshift0_0, 0.5)).r;
-      #endif
-
-      #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-      vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0 + cshift0, height0));
-      tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0 + oshift0_0, height0)).r;
-      vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1 + cshift1, height1)).rgb;
-      tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1 + oshift1_0, height1)).r;
-      #if vtkNumComponents >= 3
-      vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2 + cshift2, height2)).rgb;
-      tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2 + oshift2, height2)).r;
-      #if vtkNumComponents >= 4
-      vec3 tColor3 = mix3*texture2D(ctexture, vec2(tValue.a * cscale3 + cshift3, height3)).rgb;
-      tColor.a += goFactor.w*mix3*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, height3)).r;
-      #endif
-      #endif
-
-      #else // then not independent
-      #if vtkNumComponents == 2
-      float lum = tValue.r * cscale0 + cshift0;
-      float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1 + oshift1_0, 0.5)).r;
-      vec4 tColor = vec4(lum, lum, lum, alpha);
-      #endif
-      #if vtkNumComponents == 3
-      vec4 tColor;
-      tColor.r = tValue.r * cscale0 + cshift0;
-      tColor.g = tValue.g * cscale1 + cshift1;
-      tColor.b = tValue.b * cscale2 + cshift2;
-      tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale0 + oshift0, 0.5)).r;
-      #endif
-      #if vtkNumComponents == 4
-      vec4 tColor;
-      tColor.r = tValue.r * cscale0 + cshift0;
-      tColor.g = tValue.g * cscale1 + cshift1;
-      tColor.b = tValue.b * cscale2 + cshift2;
-      tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale3 + oshift3, 0.5)).r;
-      #endif
-      #endif // dependent
-
+      ${gradientOpacityFactors}
+      ${tColor}
       // apply lighting if requested as appropriate
-      #if vtkLightComplexity > 0
-      applyLighting_${i}(tColor.rgb, normal0);
-      #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-      applyLighting_${i}(tColor1, normal1);
-      #if vtkNumComponents >= 3
-      applyLighting_${i}(tColor2, normal2);
-      #if vtkNumComponents >= 4
-      applyLighting_${i}(tColor3, normal3);
-      #endif
-      #endif
-      #endif
-      #endif
-
+      ${applyLighting}
       // perform final independent blend as needed
-      #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-      tColor.rgb += tColor1;
-      #if vtkNumComponents >= 3
-      tColor.rgb += tColor2;
-      #if vtkNumComponents >= 4
-      tColor.rgb += tColor3;
-      #endif
-      #endif
-      #endif
-
+      ${finalIndependentBlend}
       return tColor;
     }`;
 
