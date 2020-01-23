@@ -414,16 +414,16 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       // compute gradient opacity factors as needed
       #if defined(vtkGradientOpacityOn)
       goFactor.x =
-        computeGradientOpacityFactor(normal0, goscale0, goshift0, gomin0, gomax0);
+        computeGradientOpacityFactor_${i}(normal0, goscale0, goshift0, gomin0, gomax0);
       #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
       goFactor.y =
-        computeGradientOpacityFactor(normal1, goscale1, goshift1, gomin1, gomax1);
+        computeGradientOpacityFactor_${i}(normal1, goscale1, goshift1, gomin1, gomax1);
       #if vtkNumComponents > 2
       goFactor.z =
-        computeGradientOpacityFactor(normal2, goscale2, goshift2, gomin2, gomax2);
+        computeGradientOpacityFactor_${i}(normal2, goscale2, goshift2, gomin2, gomax2);
       #if vtkNumComponents > 3
       goFactor.w =
-        computeGradientOpacityFactor(normal3, goscale3, goshift3, gomin3, gomax3);
+        computeGradientOpacityFactor_${i}(normal3, goscale3, goshift3, gomin3, gomax3);
       #endif
       #endif
       #endif
@@ -988,27 +988,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       }
 
       ${computeGradientOpacityFactor}
-      // Given a normal compute the gradient opacity factors
-      float computeGradientOpacityFactor(
-      vec4 normal, float goscale, float goshift, float gomin, float gomax)
-      {
-        #if defined(vtkGradientOpacityOn)
-        return clamp(normal.a*goscale + goshift, gomin, gomax);
-        #else
-        return 1.0;
-        #endif
-      }
-
       ${applyLighting}
-        #if vtkLightComplexity > 0
-      void applyLighting(inout vec3 tColor, vec4 normal)
-      {
-        vec3 diffuse = vec3(0.0, 0.0, 0.0);
-        vec3 specular = vec3(0.0, 0.0, 0.0);
-        //VTK::Light::Impl
-        tColor.rgb = tColor.rgb*(diffuse*vDiffuse + vAmbient) + specular*vSpecular;
-      }
-        #endif
 
       ${getColorForValue}
       // Given a texture value compute the color and opacity
@@ -1039,16 +1019,16 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         // compute gradient opacity factors as needed
         #if defined(vtkGradientOpacityOn)
         goFactor.x =
-        computeGradientOpacityFactor(normal0, goscale0, goshift0, gomin0, gomax0);
+        computeGradientOpacityFactor_0(normal0, goscale0, goshift0, gomin0, gomax0);
         #if defined(vtkIndependentComponentsOn) && (vtkNumComponents > 1)
         goFactor.y =
-        computeGradientOpacityFactor(normal1, goscale1, goshift1, gomin1, gomax1);
+        computeGradientOpacityFactor_0(normal1, goscale1, goshift1, gomin1, gomax1);
         #if vtkNumComponents > 2
         goFactor.z =
-        computeGradientOpacityFactor(normal2, goscale2, goshift2, gomin2, gomax2);
+        computeGradientOpacityFactor_0(normal2, goscale2, goshift2, gomin2, gomax2);
         #if vtkNumComponents > 3
         goFactor.w =
-        computeGradientOpacityFactor(normal3, goscale3, goshift3, gomin3, gomax3);
+        computeGradientOpacityFactor_0(normal3, goscale3, goshift3, gomin3, gomax3);
         #endif
         #endif
         #endif
@@ -1098,13 +1078,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
         // apply lighting if requested as appropriate
         #if vtkLightComplexity > 0
-        applyLighting(tColor.rgb, normal0);
+        applyLighting_0(tColor.rgb, normal0);
         #if defined(vtkIndependentComponentsOn) && vtkNumComponents >= 2
-        applyLighting(tColor1, normal1);
+        applyLighting_0(tColor1, normal1);
         #if vtkNumComponents >= 3
-        applyLighting(tColor2, normal2);
+        applyLighting_0(tColor2, normal2);
         #if vtkNumComponents >= 4
-        applyLighting(tColor3, normal3);
+        applyLighting_0(tColor3, normal3);
         #endif
         #endif
         #endif
