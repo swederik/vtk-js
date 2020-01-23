@@ -43,7 +43,7 @@ function createCube() {
   // create color and opacity transfer functions
   const ofun = vtkPiecewiseFunction.newInstance();
   ofun.addPoint(0, 0);
-  ofun.addPoint(1, 0.5);
+  ofun.addPoint(1, 0.3);
 
   const ctfun = vtkColorTransferFunction.newInstance();
   ctfun.addRGBPoint(0, 0, 0, 0);
@@ -51,13 +51,13 @@ function createCube() {
 
   actor.getProperty().setRGBTransferFunction(0, ctfun);
   actor.getProperty().setScalarOpacity(0, ofun);
-  // actor.getProperty().setScalarOpacityUnitDistance(0, 1.0);
-  // actor.getProperty().setInterpolationTypeToLinear();
-  // actor.getProperty().setShade(true);
-  // actor.getProperty().setAmbient(0.1);
-  // actor.getProperty().setDiffuse(0.9);
-  // actor.getProperty().setSpecular(0.2);
-  // actor.getProperty().setSpecularPower(10.0);
+  actor.getProperty().setScalarOpacityUnitDistance(0, 1.0);
+  actor.getProperty().setInterpolationTypeToLinear();
+  actor.getProperty().setShade(true);
+  actor.getProperty().setAmbient(0.4);
+  actor.getProperty().setDiffuse(0.5);
+  actor.getProperty().setSpecular(0.2);
+  actor.getProperty().setSpecularPower(1.0);
 
   mapper.setInputData(imageData);
 
@@ -75,6 +75,7 @@ const objects = [];
 const redCube = createCube();
 const blueCube = createCube();
 const greenCube = createCube();
+const redCube2 = createCube();
 
 blueCube.ctfun.addRGBPoint(1, 0, 0, 1);
 blueCube.imageData.setOrigin(5, 0, 0);
@@ -82,11 +83,13 @@ blueCube.imageData.setOrigin(5, 0, 0);
 greenCube.ctfun.addRGBPoint(1, 0, 1, 0);
 greenCube.imageData.setOrigin(0, -5, 0);
 
+redCube2.imageData.setOrigin(10, 15, 5);
 objects.push(redCube, blueCube, greenCube);
 
 renderer.addVolume(redCube.actor);
 renderer.addVolume(blueCube.actor);
 renderer.addVolume(greenCube.actor);
+renderer.addVolume(redCube2.actor);
 
 renderer.setUseMultiVolumeRendering(true);
 

@@ -287,8 +287,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
   function getComputeNormal(i, numComp) {
     return `
-      vec4 computeNormal_${i}(vec3 pos, float scalar, vec3 tstep) {
+      vec4 computeNormal_${i}(vec3 pos, float scalar) {
         vec4 result;
+        vec3 tstep = vec3(1.0, 1.0, 1.0) / vec3(volumeDimensions_${i});
       
         result.x = getTextureValue_${i}(pos + vec3(tstep.x, 0.0, 0.0)).a - scalar;
         result.y = getTextureValue_${i}(pos + vec3(0.0, tstep.y, 0.0)).a - scalar;
@@ -314,8 +315,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
   function getComputeMat4Normal(i, numComp) {
     let computeMat4Normal = `
-      mat4 computeMat4Normal_${i}(vec3 pos, vec4 tValue, vec3 tstep)
-      {
+      mat4 computeMat4Normal_${i}(vec3 pos, vec4 tValue) {
+        vec3 tstep = vec3(1.0, 1.0, 1.0) / vec3(volumeDimensions_${i});
+        
         mat4 result;
         vec4 distX = getTextureValue_${i}(pos + vec3(tstep.x, 0.0, 0.0)) - tValue;
         vec4 distY = getTextureValue_${i}(pos + vec3(0.0, tstep.y, 0.0)) - tValue;
@@ -397,13 +399,34 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   }
 
   function getApplyLighting(i) {
+    let lightComplexity = '';
+
+    if (model.lastLightComplexity === 3) {
+      const ren = model.openGLRenderer.getRenderable();
+      const shadowFactor = '';
+      // positional not implemented fallback to directional
+      let lightNum = 0;
+      ren.getLights().forEach((light) => {
+        const status = light.getSwitch();
+        if (status > 0) {
+          lightComplexity += `
+            float df = abs(dot(normal.rgb, -lightDirectionVC${lightNum}));,
+            diffuse += ((df${shadowFactor}) * lightColor${lightNum});,
+            float sf = pow( abs(dot(lightHalfAngleVC${lightNum},normal.rgb)), vSpecularPower_${i});,
+            specular += ((sf${shadowFactor}) * lightColor${lightNum});,
+            `;
+          lightNum++;
+        }
+      });
+    }
+
     return ` 
       #if vtkLightComplexity > 0
       void applyLighting_${i}(inout vec3 tColor, vec4 normal)
       {
         vec3 diffuse = vec3(0.0, 0.0, 0.0);
         vec3 specular = vec3(0.0, 0.0, 0.0);
-        //VTK::Light::Impl
+        ${lightComplexity}
         tColor.rgb = tColor.rgb*(diffuse * vDiffuse_${i} + vAmbient_${i}) + specular * vSpecular_${i};
       }
       #endif
@@ -416,7 +439,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     if (vtkIndependentComponentsOn && numComp > 1) {
       if (numComp > 1) {
         normalMatAndVecDefinitions += `
-        mat4 normalMat = computeMat4Normal_${i}(posIS, tValue, tstep);
+        mat4 normalMat = computeMat4Normal_${i}(pos, tValue);
         vec4 normal0 = normalMat[0];
         vec4 normal1 = normalMat[1];
       `;
@@ -434,7 +457,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       `;
       }
     } else {
-      normalMatAndVecDefinitions += `vec4 normal0 = computeNormal_${i}(posIS, tValue.a, tstep);`;
+      normalMatAndVecDefinitions += `vec4 normal0 = computeNormal_${i}(pos, tValue.a);`;
     }
 
     const normalVectors = `
@@ -798,12 +821,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vec4 tValue = vec4(0.0, 0.0, 0.0, 0.0);
         vec4 tColor = vec4(0.0, 0.0, 0.0, 0.0);
         
-        //vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0); 
-        //vec3 pos = (viewToIndex_${i} * posVCv4).xyz;
-        //vec3 tpos = pos / vec3(volumeDimensions_${i});
-        
-        bool isInside;
-        
         ${compositeVolumes}
                 
         // handle very thin volumes
@@ -1125,23 +1142,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
               ],
               false
             ).result;
-            FSSource = vtkShaderProgram.substitute(
-              FSSource,
-              '//VTK::Light::Impl',
-              [
-                //              `  float df = max(0.0, dot(normal.rgb, -lightDirectionVC${lightNum}));`,
-                `  float df = abs(dot(normal.rgb, -lightDirectionVC${lightNum}));`,
-                `  diffuse += ((df${shadowFactor}) * lightColor${lightNum});`,
-                // '  if (df > 0.0)',
-                // '    {',
-                //              `    float sf = pow( max(0.0, dot(lightHalfAngleWC${lightNum},normal.rgb)), specularPower);`,
-                `    float sf = pow( abs(dot(lightHalfAngleVC${lightNum},normal.rgb)), vSpecularPower);`,
-                `    specular += ((sf${shadowFactor}) * lightColor${lightNum});`,
-                //              '    }',
-                '  //VTK::Light::Impl',
-              ],
-              false
-            ).result;
+
             lightNum++;
           }
         });
