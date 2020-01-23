@@ -77,19 +77,40 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         'vtkOpenGLRenderWindow'
       );
       model.context = model.openGLRenderWindow.getContext();
+
       model.tris.setOpenGLRenderWindow(model.openGLRenderWindow);
       model.jitterTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-      model.scalarTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
       model.framebuffer.setOpenGLRenderWindow(model.openGLRenderWindow);
 
       model.openGLCamera = model.openGLRenderer.getViewNodeFor(
         ren.getActiveCamera()
       );
 
-      model.colorTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-      model.opacityTexture.setOpenGLRenderWindow(model.openGLRenderWindow);
-
       const actors = model.renderable.getVolumes();
+
+      actors.forEach((actor, volIdx) => {
+        if (!model.perVol[volIdx].scalarTexture) {
+          model.perVol[volIdx].scalarTexture = vtkOpenGLTexture.newInstance();
+        }
+
+        if (!model.perVol[volIdx].opacityTexture) {
+          model.perVol[volIdx].opacityTexture = vtkOpenGLTexture.newInstance();
+        }
+
+        if (!model.perVol[volIdx].colorTexture) {
+          model.perVol[volIdx].colorTexture = vtkOpenGLTexture.newInstance();
+        }
+
+        model.perVol[volIdx].scalarTexture.setOpenGLRenderWindow(
+          model.openGLRenderWindow
+        );
+        model.perVol[volIdx].colorTexture.setOpenGLRenderWindow(
+          model.openGLRenderWindow
+        );
+        model.perVol[volIdx].opacityTexture.setOpenGLRenderWindow(
+          model.openGLRenderWindow
+        );
+      });
 
       publicAPI.renderPiece(ren, actors);
     }
@@ -139,6 +160,10 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
     uniformDefinitions += `
         uniform highp sampler3D texture${i + 1};
+        
+        // opacity and color textures
+        uniform sampler2D otexture${i + 1};
+        uniform sampler2D ctexture${i + 1};
       `;
 
     // the heights defined below are the locations
@@ -450,32 +475,43 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     if (numComp === 1) {
       // single component is always independent
       tColor += `
-        vec4 tColor = texture2D(ctexture, vec2(tValue.r * cscale0_${i} + cshift0_${i}, 0.5));
-        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.r * oscale0_${i} + oshift0_${i}, 0.5)).r;
+        vec4 tColor = texture2D(ctexture${i +
+          1}, vec2(tValue.r * cscale0_${i} + cshift0_${i}, 0.5));
+        tColor.a = goFactor.x*texture2D(otexture${i +
+          1}, vec2(tValue.r * oscale0_${i} + oshift0_${i}, 0.5)).r;
       `;
     } else if (vtkIndependentComponentsOn && numComp >= 2) {
       tColor += `
-      vec4 tColor = mix0*texture2D(ctexture, vec2(tValue.r * cscale0_${i} + cshift0_${i}, height0_${i}));
-      tColor.a = goFactor.x*mix0*texture2D(otexture, vec2(tValue.r * oscale0_${i} + oshift0_${i}, height0_${i})).r;
-      vec3 tColor1 = mix1*texture2D(ctexture, vec2(tValue.g * cscale1_${i} + cshift1_${i}, height1_${i})).rgb;
-      tColor.a += goFactor.y*mix1*texture2D(otexture, vec2(tValue.g * oscale1_${i} + oshift1_${i}, height1_${i})).r;`;
+      vec4 tColor = mix0*texture2D(ctexture${i +
+        1}, vec2(tValue.r * cscale0_${i} + cshift0_${i}, height0_${i}));
+      tColor.a = goFactor.x*mix0*texture2D(otexture${i +
+        1}, vec2(tValue.r * oscale0_${i} + oshift0_${i}, height0_${i})).r;
+      vec3 tColor1 = mix1*texture2D(ctexture${i +
+        1}, vec2(tValue.g * cscale1_${i} + cshift1_${i}, height1_${i})).rgb;
+      tColor.a += goFactor.y*mix1*texture2D(otexture${i +
+        1}, vec2(tValue.g * oscale1_${i} + oshift1_${i}, height1_${i})).r;`;
 
       if (numComp >= 3) {
         tColor += `
-        vec3 tColor2 = mix2*texture2D(ctexture, vec2(tValue.b * cscale2_${i} + cshift2_${i}, height2_${i})).rgb;
-        tColor.a += goFactor.z*mix2*texture2D(otexture, vec2(tValue.b * oscale2_${i} + oshift2_${i}, height2_${i})).r;`;
+        vec3 tColor2 = mix2*texture2D(ctexture${i +
+          1}, vec2(tValue.b * cscale2_${i} + cshift2_${i}, height2_${i})).rgb;
+        tColor.a += goFactor.z*mix2*texture2D(otexture${i +
+          1}, vec2(tValue.b * oscale2_${i} + oshift2_${i}, height2_${i})).r;`;
       }
 
       if (numComp >= 4) {
         tColor += `
-        vec3 tColor3 = mix3*texture2D(ctexture, vec2(tValue.a * cscale3_${i} + cshift3_${i}, height3_${i})).rgb;
-        tColor.a += goFactor.w*mix3*texture2D(otexture, vec2(tValue.a * oscale3_${i} + oshift3_${i}, height3_${i})).r;`;
+        vec3 tColor3 = mix3*texture2D(ctexture${i +
+          1}, vec2(tValue.a * cscale3_${i} + cshift3_${i}, height3_${i})).rgb;
+        tColor.a += goFactor.w*mix3*texture2D(otexture${i +
+          1}, vec2(tValue.a * oscale3_${i} + oshift3_${i}, height3_${i})).r;`;
       }
     } else if (numComp === 2) {
       // not independent
       tColor += `
         float lum = tValue.r * cscale0_${i} + cshift0_${i};
-        float alpha = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale1_${i} + oshift1_${i}, 0.5)).r;
+        float alpha = goFactor.x*texture2D(otexture${i +
+          1}, vec2(tValue.a * oscale1_${i} + oshift1_${i}, 0.5)).r;
         vec4 tColor = vec4(lum, lum, lum, alpha);
         `;
     } else if (numComp === 3) {
@@ -484,7 +520,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         tColor.r = tValue.r * cscale0_${i} + cshift0_${i};
         tColor.g = tValue.g * cscale1_${i} + cshift1_${i};
         tColor.b = tValue.b * cscale2_${i} + cshift2_${i};
-        tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale0_${i} + oshift0_${i}, 0.5)).r;
+        tColor.a = goFactor.x*texture2D(otexture${i +
+          1}, vec2(tValue.a * oscale0_${i} + oshift0_${i}, 0.5)).r;
         `;
     } else if (numComp === 4) {
       // not independent
@@ -492,7 +529,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           tColor.r = tValue.r * cscale0_${i} + cshift0_${i};
           tColor.g = tValue.g * cscale1_${i} + cshift1_${i};
           tColor.b = tValue.b * cscale2_${i} + cshift2_${i};
-          tColor.a = goFactor.x*texture2D(otexture, vec2(tValue.a * oscale3_${i} + oshift3_${i}, 0.5)).r;
+          tColor.a = goFactor.x*texture2D(otexture${i +
+            1}, vec2(tValue.a * oscale3_${i} + oshift3_${i}, 0.5)).r;
         `;
     }
 
@@ -773,10 +811,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       uniform float camNear;
       uniform float camFar;
       uniform int cameraParallel;
-      
-      // opacity and color textures
-      uniform sampler2D otexture;
-      uniform sampler2D ctexture;
 
       // jitter texture
       uniform sampler2D jtexture;
@@ -820,9 +854,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       
       // first declare the settings from the mapper
       // that impact the code paths in here
-
-      // always set vtkNumComponents 1,2,3,4
-      //VTK::NumComponents
 
       // possibly define vtkIndependentComponents
       //VTK::IndependentComponentsOn
@@ -895,13 +926,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     const actor = actors[0];
     let FSSource = shaders.Fragment;
 
-    const numComp = model.scalarTexture.getComponents();
-    FSSource = vtkShaderProgram.substitute(
-      FSSource,
-      '//VTK::NumComponents',
-      `#define vtkNumComponents ${numComp}`
-    ).result;
-
     const iComps = actor.getProperty().getIndependentComponents();
     if (iComps) {
       FSSource = vtkShaderProgram.substitute(
@@ -944,7 +968,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     ).result;
 
     // if using gradient opacity define that
-    model.gopacity = actor.getProperty().getUseGradientOpacity(0);
+    /* model.gopacity = actor.getProperty().getUseGradientOpacity(0);
     for (let nc = 1; iComps && !model.gopacity && nc < numComp; ++nc) {
       if (actor.getProperty().getUseGradientOpacity(nc)) {
         model.gopacity = true;
@@ -956,7 +980,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         '//VTK::GradientOpacityOn',
         '#define vtkGradientOpacityOn'
       ).result;
-    }
+    } */
 
     // if we have a ztexture then declare it and use it
     if (model.zBufferTexture !== null) {
@@ -1167,7 +1191,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
 
     const sampleDist = 1; // model.renderable.getSampleDistance();
-    program.setUniformi('texture1', model.scalarTexture.getTextureUnit());
+    actors.forEach((actor, volIdx) => {
+      const { scalarTexture } = model.perVol[volIdx];
+
+      program.setUniformi(
+        `texture${volIdx + 1}`,
+        scalarTexture.getTextureUnit()
+      );
+    });
+
     program.setUniformf('sampleDistance', 1);
 
     // if we have a zbuffer texture then set it
@@ -1443,17 +1475,23 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
   publicAPI.setPropertyShaderParameters = (cellBO, ren, actors) => {
     const program = cellBO.getProgram();
-
-    program.setUniformi('ctexture', model.colorTexture.getTextureUnit());
-    program.setUniformi('otexture', model.opacityTexture.getTextureUnit());
     program.setUniformi('jtexture', model.jitterTexture.getTextureUnit());
 
     actors.forEach((actor, volIdx) => {
-      const volInfo = model.scalarTexture.getVolumeInfo();
+      program.setUniformi(
+        `ctexture${volIdx + 1}`,
+        model.perVol[volIdx].colorTexture.getTextureUnit()
+      );
+      program.setUniformi(
+        `otexture${volIdx + 1}`,
+        model.perVol[volIdx].opacityTexture.getTextureUnit()
+      );
+
+      const volInfo = model.perVol[volIdx].scalarTexture.getVolumeInfo();
       const vprop = actor.getProperty();
 
       // set the component mix when independent
-      const numComp = model.scalarTexture.getComponents();
+      const numComp = model.perVol[volIdx].scalarTexture.getComponents();
       const iComps = actor.getProperty().getIndependentComponents();
       if (iComps && numComp >= 2) {
         let totalComp = 0.0;
@@ -1565,8 +1603,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.renderPieceStart = (ren, actors) => {
-    const actor = actors[0];
-
     const autoAdjust = false; // model.renderable.getAutoAdjustSampleDistances();
     if (autoAdjust) {
       const rwi = ren.getVTKWindow().getInteractor();
@@ -1685,14 +1721,17 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     publicAPI.updateBufferObjects(ren, actors);
 
     // set interpolation on the texture based on property setting
-    const iType = actor.getProperty().getInterpolationType();
-    if (iType === InterpolationType.NEAREST) {
-      model.scalarTexture.setMinificationFilter(Filter.NEAREST);
-      model.scalarTexture.setMagnificationFilter(Filter.NEAREST);
-    } else {
-      model.scalarTexture.setMinificationFilter(Filter.LINEAR);
-      model.scalarTexture.setMagnificationFilter(Filter.LINEAR);
-    }
+    actors.forEach((actor, volIdx) => {
+      const { scalarTexture } = model.perVol[volIdx];
+      const iType = actor.getProperty().getInterpolationType();
+      if (iType === InterpolationType.NEAREST) {
+        scalarTexture.setMinificationFilter(Filter.NEAREST);
+        scalarTexture.setMagnificationFilter(Filter.NEAREST);
+      } else {
+        scalarTexture.setMinificationFilter(Filter.LINEAR);
+        scalarTexture.setMagnificationFilter(Filter.LINEAR);
+      }
+    });
 
     // Bind the OpenGL, this is shared between the different primitive/cell types.
     model.lastBoundBO = null;
@@ -1704,13 +1743,14 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.renderPieceDraw = (ren, actors) => {
-    const actor = actors[0];
     const gl = model.context;
 
     // render the texture
-    model.scalarTexture.activate();
-    model.opacityTexture.activate();
-    model.colorTexture.activate();
+    actors.forEach((actor, volIdx) => {
+      model.perVol[volIdx].scalarTexture.activate();
+      model.perVol[volIdx].opacityTexture.activate();
+      model.perVol[volIdx].colorTexture.activate();
+    });
     model.jitterTexture.activate();
 
     publicAPI.updateShaders(model.tris, ren, actors);
@@ -1722,9 +1762,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     gl.drawArrays(gl.TRIANGLES, 0, model.tris.getCABO().getElementCount());
     model.tris.getVAO().release();
 
-    model.scalarTexture.deactivate();
-    model.colorTexture.deactivate();
-    model.opacityTexture.deactivate();
+    actors.forEach((actor, volIdx) => {
+      model.perVol[volIdx].scalarTexture.deactivate();
+      model.perVol[volIdx].opacityTexture.deactivate();
+      model.perVol[volIdx].colorTexture.deactivate();
+    });
     model.jitterTexture.deactivate();
   };
 
@@ -2203,8 +2245,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       const numIComps = iComps ? numComp : 1;
       // TODO[multivolume] Stupid question: If we modify these,
       //  are they modified in the object as well?
-      // let { scalarTexture, scalarTextureMTime } = volumeData;
-      const { opacityTextureMTime, colorTextureMTime } = volumeData;
+      let {
+        scalarTextureMTime,
+        colorTextureMTime,
+        opacityTextureMTime,
+      } = volumeData;
+
+      const { scalarTexture, opacityTexture, colorTexture } = volumeData;
 
       // rebuild opacity tfun?
       if (opacityTextureMTime !== vprop.getMTime()) {
@@ -2227,9 +2274,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           }
         }
 
-        model.opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
-        model.opacityTexture.setMinificationFilter(Filter.LINEAR);
-        model.opacityTexture.setMagnificationFilter(Filter.LINEAR);
+        opacityTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        opacityTexture.setMinificationFilter(Filter.LINEAR);
+        opacityTexture.setMagnificationFilter(Filter.LINEAR);
 
         // use float texture where possible because we really need the resolution
         // for this table. Errors in low values of opacity accumulate to
@@ -2240,7 +2287,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           (model.context.getExtension('OES_texture_float') &&
             model.context.getExtension('OES_texture_float_linear'))
         ) {
-          model.opacityTexture.create2DFromRaw(
+          opacityTexture.create2DFromRaw(
             oWidth,
             2 * numIComps,
             1,
@@ -2252,7 +2299,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           for (let i = 0; i < oSize; ++i) {
             oTable[i] = 255.0 * ofTable[i];
           }
-          model.opacityTexture.create2DFromRaw(
+          opacityTexture.create2DFromRaw(
             oWidth,
             2 * numIComps,
             1,
@@ -2260,7 +2307,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             oTable
           );
         }
-        model.opacityTextureString = toString;
+
+        opacityTextureMTime = vprop.getMTime();
       }
 
       if (colorTextureMTime !== vprop.getMTime()) {
@@ -2279,32 +2327,30 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           }
         }
 
-        console.log(cTable);
+        colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        colorTexture.setMinificationFilter(Filter.LINEAR);
+        colorTexture.setMagnificationFilter(Filter.LINEAR);
 
-        model.colorTexture.releaseGraphicsResources(model.openGLRenderWindow);
-        model.colorTexture.setMinificationFilter(Filter.LINEAR);
-        model.colorTexture.setMagnificationFilter(Filter.LINEAR);
-
-        model.colorTexture.create2DFromRaw(
+        colorTexture.create2DFromRaw(
           cWidth,
           2 * numIComps,
           3,
           VtkDataTypes.UNSIGNED_CHAR,
           cTable
         );
-        model.colorTextureString = toString;
+
+        colorTextureMTime = vprop.getMTime();
       }
 
       const sampleDist = 1; // model.renderable.getSampleDistance();
 
       // rebuild the scalarTexture if the data has changed
-      toString = `${image.getMTime()}`;
-      if (model.scalarTextureString !== toString) {
+      if (scalarTextureMTime !== image.getMTime()) {
         // Build the textures
         const dims = image.getDimensions();
-        model.scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
-        model.scalarTexture.resetFormatAndType();
-        model.scalarTexture.create3DFilterableFromRaw(
+        scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
+        scalarTexture.resetFormatAndType();
+        scalarTexture.create3DFilterableFromRaw(
           dims[0],
           dims[1],
           dims[2],
@@ -2319,7 +2365,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             .getData()
         );
 
-        model.scalarTextureString = toString;
+        scalarTextureMTime = image.getMTime();
       }
     });
 
@@ -2439,9 +2485,7 @@ export function extend(publicAPI, model, initialValues = {}) {
   model.perVol = [{}];
 
   model.tris = vtkHelper.newInstance();
-  model.scalarTexture = vtkOpenGLTexture.newInstance();
-  model.opacityTexture = vtkOpenGLTexture.newInstance();
-  model.colorTexture = vtkOpenGLTexture.newInstance();
+
   model.jitterTexture = vtkOpenGLTexture.newInstance();
   model.jitterTexture.setWrapS(Wrap.REPEAT);
   model.jitterTexture.setWrapT(Wrap.REPEAT);
