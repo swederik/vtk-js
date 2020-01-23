@@ -1215,11 +1215,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.setCameraShaderParameters = (cellBO, ren, actors) => {
-    const actor = actors[0];
     // // [WMVD]C == {world, model, view, display} coordinates
     // // E.g., WCDC == world to display coordinate transformation
     const keyMats = model.openGLCamera.getKeyMatrices(ren);
     publicAPI.getKeyMatrices(actors);
+
     const actMats = model.perVol[0].actMats;
 
     mat4.multiply(model.modelToView, keyMats.wcvc, actMats.mcwc);
@@ -1281,118 +1281,117 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       program.setUniformi('cameraParallel', cam.getParallelProjection());
     }
 
-    const ext = model.currentInput.getExtent();
-    const spc = model.currentInput.getSpacing();
+    actors.forEach((actor, volIdx) => {
+      const ext = model.currentInput.getExtent();
+      const spc = model.currentInput.getSpacing();
 
-    const vsize = vec3.create();
-    vec3.set(
-      vsize,
-      (ext[1] - ext[0] + 1) * spc[0],
-      (ext[3] - ext[2] + 1) * spc[1],
-      (ext[5] - ext[4] + 1) * spc[2]
-    );
-    program.setUniform3f('vSpacing', spc[0], spc[1], spc[2]);
-    program.setUniform3f('vSpacing_0', spc[0], spc[1], spc[2]);
+      const vsize = vec3.create();
+      vec3.set(
+        vsize,
+        (ext[1] - ext[0] + 1) * spc[0],
+        (ext[3] - ext[2] + 1) * spc[1],
+        (ext[5] - ext[4] + 1) * spc[2]
+      );
+      program.setUniform3f('vSpacing', spc[0], spc[1], spc[2]);
+      program.setUniform3f(`vSpacing_${volIdx}`, spc[0], spc[1], spc[2]);
 
-    vec3.set(pos, ext[0], ext[2], ext[4]);
-    model.currentInput.indexToWorldVec3(pos, pos);
+      vec3.set(pos, ext[0], ext[2], ext[4]);
+      model.currentInput.indexToWorldVec3(pos, pos);
 
-    vec3.transformMat4(pos, pos, model.modelToView);
-    program.setUniform3f('vOriginVC', pos[0], pos[1], pos[2]);
-    program.setUniform3f('vOriginVC_0', pos[0], pos[1], pos[2]);
+      vec3.transformMat4(pos, pos, model.modelToView);
+      program.setUniform3f('vOriginVC', pos[0], pos[1], pos[2]);
+      program.setUniform3f(`vOriginVC_${volIdx}`, pos[0], pos[1], pos[2]);
 
-    // apply the image directions
-    const i2wmat4 = model.currentInput.getIndexToWorld();
-    mat4.multiply(model.idxToView, model.modelToView, i2wmat4);
+      // apply the image directions
+      const i2wmat4 = model.currentInput.getIndexToWorld();
+      mat4.multiply(model.idxToView, model.modelToView, i2wmat4);
 
-    mat3.multiply(
-      model.idxNormalMatrix,
-      keyMats.normalMatrix,
-      actMats.normalMatrix
-    );
-    mat3.multiply(
-      model.idxNormalMatrix,
-      model.idxNormalMatrix,
-      model.currentInput.getDirection()
-    );
+      mat3.multiply(
+        model.idxNormalMatrix,
+        keyMats.normalMatrix,
+        actMats.normalMatrix
+      );
+      mat3.multiply(
+        model.idxNormalMatrix,
+        model.idxNormalMatrix,
+        model.currentInput.getDirection()
+      );
 
-    const sampleDist = 1; // model.renderable.getSampleDistance();
-    const maxSamples = vec3.length(vsize) / 1;
-    if (maxSamples > 1000) {
-      vtkWarningMacro(`The number of steps required ${Math.ceil(
-        maxSamples
-      )} is larger than the
+      const sampleDist = 1; // model.renderable.getSampleDistance();
+      const maxSamples = vec3.length(vsize) / 1;
+      if (maxSamples > 1000) {
+        vtkWarningMacro(`The number of steps required ${Math.ceil(
+          maxSamples
+        )} is larger than the
         specified maximum number of steps ${1000}.
         Please either change the
         volumeMapper sampleDistance or its maximum number of samples.`);
-    }
-
-    const vctoijk = vec3.create();
-
-    vec3.set(vctoijk, 1.0, 1.0, 1.0);
-    vec3.divide(vctoijk, vctoijk, vsize);
-    program.setUniform3f('vVCToIJK', vctoijk[0], vctoijk[1], vctoijk[2]);
-    program.setUniform3f('vVCToIJK_0', vctoijk[0], vctoijk[1], vctoijk[2]);
-    program.setUniform3i('volumeDimensions', dims[0], dims[1], dims[2]);
-    program.setUniform3i('volumeDimensions_0', dims[0], dims[1], dims[2]);
-
-    if (!model.openGLRenderWindow.getWebgl2()) {
-      const volInfo = model.scalarTexture.getVolumeInfo();
-      program.setUniformf('texWidth', model.scalarTexture.getWidth());
-      program.setUniformf('texHeight', model.scalarTexture.getHeight());
-      program.setUniformi('xreps', volInfo.xreps);
-      program.setUniformf('xstride', volInfo.xstride);
-      program.setUniformf('ystride', volInfo.ystride);
-    }
-
-    // map normals through normal matrix
-    // then use a point on the plane to compute the distance
-    const normal = vec3.create();
-    const pos2 = vec3.create();
-    for (let i = 0; i < 6; ++i) {
-      switch (i) {
-        default:
-        case 0:
-          vec3.set(normal, 1.0, 0.0, 0.0);
-          vec3.set(pos2, ext[1], ext[3], ext[5]);
-          break;
-        case 1:
-          vec3.set(normal, -1.0, 0.0, 0.0);
-          vec3.set(pos2, ext[0], ext[2], ext[4]);
-          break;
-        case 2:
-          vec3.set(normal, 0.0, 1.0, 0.0);
-          vec3.set(pos2, ext[1], ext[3], ext[5]);
-          break;
-        case 3:
-          vec3.set(normal, 0.0, -1.0, 0.0);
-          vec3.set(pos2, ext[0], ext[2], ext[4]);
-          break;
-        case 4:
-          vec3.set(normal, 0.0, 0.0, 1.0);
-          vec3.set(pos2, ext[1], ext[3], ext[5]);
-          break;
-        case 5:
-          vec3.set(normal, 0.0, 0.0, -1.0);
-          vec3.set(pos2, ext[0], ext[2], ext[4]);
-          break;
       }
-      vec3.transformMat3(normal, normal, model.idxNormalMatrix);
-      vec3.transformMat4(pos2, pos2, model.idxToView);
-      const dist = -1.0 * vec3.dot(pos2, normal);
 
-      // we have the plane in view coordinates
-      // specify the planes in view coordinates
-      program.setUniform3f(`vPlaneNormal${i}`, normal[0], normal[1], normal[2]);
+      const vctoijk = vec3.create();
+
+      vec3.set(vctoijk, 1.0, 1.0, 1.0);
+      vec3.divide(vctoijk, vctoijk, vsize);
       program.setUniform3f(
-        `vPlaneNormal${i}_0`,
-        normal[0],
-        normal[1],
-        normal[2]
+        `vVCToIJK_${volIdx}`,
+        vctoijk[0],
+        vctoijk[1],
+        vctoijk[2]
       );
-      program.setUniformf(`vPlaneDistance${i}`, dist);
-      program.setUniformf(`vPlaneDistance${i}_0`, dist);
-    }
+      program.setUniform3i(
+        `volumeDimensions_${volIdx}`,
+        dims[0],
+        dims[1],
+        dims[2]
+      );
+
+      // map normals through normal matrix
+      // then use a point on the plane to compute the distance
+      const normal = vec3.create();
+      const pos2 = vec3.create();
+      for (let i = 0; i < 6; ++i) {
+        switch (i) {
+          default:
+          case 0:
+            vec3.set(normal, 1.0, 0.0, 0.0);
+            vec3.set(pos2, ext[1], ext[3], ext[5]);
+            break;
+          case 1:
+            vec3.set(normal, -1.0, 0.0, 0.0);
+            vec3.set(pos2, ext[0], ext[2], ext[4]);
+            break;
+          case 2:
+            vec3.set(normal, 0.0, 1.0, 0.0);
+            vec3.set(pos2, ext[1], ext[3], ext[5]);
+            break;
+          case 3:
+            vec3.set(normal, 0.0, -1.0, 0.0);
+            vec3.set(pos2, ext[0], ext[2], ext[4]);
+            break;
+          case 4:
+            vec3.set(normal, 0.0, 0.0, 1.0);
+            vec3.set(pos2, ext[1], ext[3], ext[5]);
+            break;
+          case 5:
+            vec3.set(normal, 0.0, 0.0, -1.0);
+            vec3.set(pos2, ext[0], ext[2], ext[4]);
+            break;
+        }
+        vec3.transformMat3(normal, normal, model.idxNormalMatrix);
+        vec3.transformMat4(pos2, pos2, model.idxToView);
+        const dist = -1.0 * vec3.dot(pos2, normal);
+
+        // we have the plane in view coordinates
+        // specify the planes in view coordinates
+        program.setUniform3f(
+          `vPlaneNormal${i}_${volIdx}`,
+          normal[0],
+          normal[1],
+          normal[2]
+        );
+        program.setUniformf(`vPlaneDistance${i}_${volIdx}`, dist);
+      }
+    });
 
     mat4.invert(model.displayToView, keyMats.vcdc);
     program.setUniformMatrix('DCVCMatrix', model.displayToView);
@@ -1410,6 +1409,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         // mat3.transpose(keyMats.normalMatrix, keyMats.normalMatrix);
         let lightNum = 0;
         const lightColor = [];
+        const normal = vec3.create();
         ren.getLights().forEach((light) => {
           const status = light.getSwitch();
           if (status > 0) {
@@ -1743,7 +1743,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     model.jitterTexture.deactivate();
   };
 
-  function getProgramInfo(gl, program) {
+  /* getProgramInfo(gl, program) {
     const result = {
       attributes: [],
       uniforms: [],
@@ -1824,7 +1824,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     });
 
     return result;
-  }
+  } */
 
   publicAPI.renderPieceFinish = (ren, actors) => {
     const actor = actors[0];
@@ -1918,11 +1918,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
     }
 
-    const gl = model.context;
+    /* const gl = model.context;
     const program = model.lastBoundBO.getProgram().getHandle();
 
     console.warn(getProgramInfo(gl, program));
-    console.warn(JSON.stringify(getProgramInfo(gl, program), null, 2));
+    console.warn(JSON.stringify(getProgramInfo(gl, program), null, 2)); */
   };
 
   publicAPI.renderPiece = (ren, actors) => {
