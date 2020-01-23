@@ -867,7 +867,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         if (raySteps <= 1.0) {
           tColor.a = 1.0 - pow(1.0 - tColor.a, raySteps);
           gl_FragData[0] = tColor;
-          gl_FragData[0] = vec4(0.0, 1.0, 1.0, 1.0);
           return;
         }
   
@@ -891,10 +890,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             tColor = getColorForValue_${i}(tValue, pos);
       
             color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
-          } else {
-            // gl_FragData[0] = vec4(0.1, 0.7, 0.1, 1.0);
-            color = vec4(0.1, 0.7, 0.1, 0.5);
-            //return;
           }
           
           stepsTraveled++;
@@ -1094,7 +1089,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
         if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
-          gl_FragData[0] = vec4(0.5, 0.5, 0.0, 1.0);
           discard;
         }
 
