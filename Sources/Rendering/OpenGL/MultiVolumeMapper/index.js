@@ -1292,14 +1292,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         (ext[3] - ext[2] + 1) * spc[1],
         (ext[5] - ext[4] + 1) * spc[2]
       );
-      program.setUniform3f('vSpacing', spc[0], spc[1], spc[2]);
       program.setUniform3f(`vSpacing_${volIdx}`, spc[0], spc[1], spc[2]);
 
       vec3.set(pos, ext[0], ext[2], ext[4]);
       model.currentInput.indexToWorldVec3(pos, pos);
 
       vec3.transformMat4(pos, pos, model.modelToView);
-      program.setUniform3f('vOriginVC', pos[0], pos[1], pos[2]);
       program.setUniform3f(`vOriginVC_${volIdx}`, pos[0], pos[1], pos[2]);
 
       // apply the image directions
@@ -1444,131 +1442,118 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.setPropertyShaderParameters = (cellBO, ren, actors) => {
-    const actor = actors[0];
     const program = cellBO.getProgram();
 
     program.setUniformi('ctexture', model.colorTexture.getTextureUnit());
     program.setUniformi('otexture', model.opacityTexture.getTextureUnit());
     program.setUniformi('jtexture', model.jitterTexture.getTextureUnit());
 
-    const volInfo = model.scalarTexture.getVolumeInfo();
-    const vprop = actor.getProperty();
+    actors.forEach((actor, volIdx) => {
+      const volInfo = model.scalarTexture.getVolumeInfo();
+      const vprop = actor.getProperty();
 
-    // set the component mix when independent
-    const numComp = model.scalarTexture.getComponents();
-    const iComps = actor.getProperty().getIndependentComponents();
-    if (iComps && numComp >= 2) {
-      let totalComp = 0.0;
-      for (let i = 0; i < numComp; ++i) {
-        totalComp += actor.getProperty().getComponentWeight(i);
-      }
-      for (let i = 0; i < numComp; ++i) {
-        program.setUniformf(
-          `mix${i}`,
-          actor.getProperty().getComponentWeight(i) / totalComp
-        );
-      }
-    }
-
-    // three levels of shift scale combined into one
-    // for performance in the fragment shader
-    for (let i = 0; i < numComp; ++i) {
-      const target = iComps ? i : 0;
-      const sscale = volInfo.scale[i];
-      const ofun = vprop.getScalarOpacity(target);
-      const oRange = ofun.getRange();
-      const oscale = sscale / (oRange[1] - oRange[0]);
-      const oshift = (volInfo.offset[i] - oRange[0]) / (oRange[1] - oRange[0]);
-      program.setUniformf(`oshift${i}`, oshift);
-      program.setUniformf(`oshift${i}_0`, oshift);
-      program.setUniformf(`oscale${i}`, oscale);
-      program.setUniformf(`oscale${i}_0`, oscale);
-
-      const cfun = vprop.getRGBTransferFunction(target);
-      const cRange = cfun.getRange();
-      program.setUniformf(
-        `cshift${i}`,
-        (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0])
-      );
-      program.setUniformf(
-        `cshift${i}_0`,
-        (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0])
-      );
-      program.setUniformf(`cscale${i}`, sscale / (cRange[1] - cRange[0]));
-      program.setUniformf(`cscale${i}_0`, sscale / (cRange[1] - cRange[0]));
-    }
-
-    if (model.gopacity) {
-      if (iComps) {
-        for (let nc = 0; nc < numComp; ++nc) {
-          const sscale = volInfo.scale[nc];
-          const useGO = vprop.getUseGradientOpacity(nc);
-          if (useGO) {
-            const gomin = vprop.getGradientOpacityMinimumOpacity(nc);
-            const gomax = vprop.getGradientOpacityMaximumOpacity(nc);
-            program.setUniformf(`gomin${nc}`, gomin);
-            program.setUniformf(`gomax${nc}`, gomax);
-            const goRange = [
-              vprop.getGradientOpacityMinimumValue(nc),
-              vprop.getGradientOpacityMaximumValue(nc),
-            ];
-            program.setUniformf(
-              `goscale${nc}`,
-              (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
-            );
-            program.setUniformf(
-              `goshift${nc}`,
-              (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) +
-                gomin
-            );
-          } else {
-            program.setUniformf(`gomin${nc}`, 1.0);
-            program.setUniformf(`gomax${nc}`, 1.0);
-            program.setUniformf(`goscale${nc}`, 0.0);
-            program.setUniformf(`goshift${nc}`, 1.0);
-          }
+      // set the component mix when independent
+      const numComp = model.scalarTexture.getComponents();
+      const iComps = actor.getProperty().getIndependentComponents();
+      if (iComps && numComp >= 2) {
+        let totalComp = 0.0;
+        for (let i = 0; i < numComp; ++i) {
+          totalComp += actor.getProperty().getComponentWeight(i);
         }
-      } else {
-        const sscale = volInfo.scale[numComp - 1];
-        const gomin = vprop.getGradientOpacityMinimumOpacity(0);
-        const gomax = vprop.getGradientOpacityMaximumOpacity(0);
-        program.setUniformf('gomin0', gomin);
-        program.setUniformf('gomax0', gomax);
-        const goRange = [
-          vprop.getGradientOpacityMinimumValue(0),
-          vprop.getGradientOpacityMaximumValue(0),
-        ];
+        for (let i = 0; i < numComp; ++i) {
+          program.setUniformf(
+            `mix${i}_${volIdx}`,
+            actor.getProperty().getComponentWeight(i) / totalComp
+          );
+        }
+      }
+
+      // three levels of shift scale combined into one
+      // for performance in the fragment shader
+      for (let i = 0; i < numComp; ++i) {
+        const target = iComps ? i : 0;
+        const sscale = volInfo.scale[i];
+        const ofun = vprop.getScalarOpacity(target);
+        const oRange = ofun.getRange();
+        const oscale = sscale / (oRange[1] - oRange[0]);
+        const oshift =
+          (volInfo.offset[i] - oRange[0]) / (oRange[1] - oRange[0]);
+        program.setUniformf(`oshift${i}_${volIdx}`, oshift);
+        program.setUniformf(`oscale${i}_${volIdx}`, oscale);
+
+        const cfun = vprop.getRGBTransferFunction(target);
+        const cRange = cfun.getRange();
         program.setUniformf(
-          'goscale0',
-          (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
+          `cshift${i}_${volIdx}`,
+          (volInfo.offset[i] - cRange[0]) / (cRange[1] - cRange[0])
         );
         program.setUniformf(
-          'goshift0',
-          (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) + gomin
+          `cscale${i}_${volIdx}`,
+          sscale / (cRange[1] - cRange[0])
         );
       }
-    }
 
-    const vtkImageLabelOutline = actor.getProperty().getUseLabelOutline();
-    if (vtkImageLabelOutline === true) {
-      const labelOutlineThickness = actor
-        .getProperty()
-        .getLabelOutlineThickness();
+      if (model.gopacity) {
+        if (iComps) {
+          for (let nc = 0; nc < numComp; ++nc) {
+            const sscale = volInfo.scale[nc];
+            const useGO = vprop.getUseGradientOpacity(nc);
+            if (useGO) {
+              const gomin = vprop.getGradientOpacityMinimumOpacity(nc);
+              const gomax = vprop.getGradientOpacityMaximumOpacity(nc);
+              program.setUniformf(`gomin${nc}_${volIdx}`, gomin);
+              program.setUniformf(`gomax${nc}_${volIdx}`, gomax);
+              const goRange = [
+                vprop.getGradientOpacityMinimumValue(nc),
+                vprop.getGradientOpacityMaximumValue(nc),
+              ];
+              program.setUniformf(
+                `goscale${nc}_${volIdx}`,
+                (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
+              );
+              program.setUniformf(
+                `goshift${nc}_${volIdx}`,
+                (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) +
+                  gomin
+              );
+            } else {
+              program.setUniformf(`gomin${nc}_${volIdx}`, 1.0);
+              program.setUniformf(`gomax${nc}_${volIdx}`, 1.0);
+              program.setUniformf(`goscale${nc}_${volIdx}`, 0.0);
+              program.setUniformf(`goshift${nc}_${volIdx}`, 1.0);
+            }
+          }
+        } else {
+          const sscale = volInfo.scale[numComp - 1];
+          const gomin = vprop.getGradientOpacityMinimumOpacity(0);
+          const gomax = vprop.getGradientOpacityMaximumOpacity(0);
+          program.setUniformf(`gomin0_${volIdx}`, gomin);
+          program.setUniformf(`gomax0_${volIdx}`, gomax);
+          const goRange = [
+            vprop.getGradientOpacityMinimumValue(0),
+            vprop.getGradientOpacityMaximumValue(0),
+          ];
+          program.setUniformf(
+            `goscale_${volIdx}`,
+            (sscale * (gomax - gomin)) / (goRange[1] - goRange[0])
+          );
+          program.setUniformf(
+            `goshift0_${volIdx}`,
+            (-goRange[0] * (gomax - gomin)) / (goRange[1] - goRange[0]) + gomin
+          );
+        }
+      }
 
-      program.setUniformi('outlineThickness', labelOutlineThickness);
-    }
-
-    if (model.lastLightComplexity > 0) {
-      program.setUniformf('vAmbient', vprop.getAmbient());
-      program.setUniformf('vDiffuse', vprop.getDiffuse());
-      program.setUniformf('vSpecular', vprop.getSpecular());
-      program.setUniformf('vSpecularPower', vprop.getSpecularPower());
-
-      program.setUniformf('vAmbient_0', vprop.getAmbient());
-      program.setUniformf('vDiffuse_0', vprop.getDiffuse());
-      program.setUniformf('vSpecular_0', vprop.getSpecular());
-      program.setUniformf('vSpecularPower_0', vprop.getSpecularPower());
-    }
+      if (model.lastLightComplexity > 0) {
+        program.setUniformf(`vAmbient_${volIdx}`, vprop.getAmbient());
+        program.setUniformf(`vDiffuse_${volIdx}`, vprop.getDiffuse());
+        program.setUniformf(`vSpecular_${volIdx}`, vprop.getSpecular());
+        program.setUniformf(
+          `vSpecularPower_${volIdx}`,
+          vprop.getSpecularPower()
+        );
+      }
+    });
   };
 
   publicAPI.getRenderTargetSize = () => {
