@@ -53,7 +53,7 @@ function createCube() {
   actor.getProperty().setScalarOpacity(0, ofun);
   actor.getProperty().setScalarOpacityUnitDistance(0, 1.0);
   actor.getProperty().setInterpolationTypeToLinear();
-  actor.getProperty().setShade(true);
+  actor.getProperty().setShade(false);
   actor.getProperty().setAmbient(0.4);
   actor.getProperty().setDiffuse(0.5);
   actor.getProperty().setSpecular(0.2);
@@ -77,19 +77,21 @@ const blueCube = createCube();
 const greenCube = createCube();
 const redCube2 = createCube();
 
+redCube.imageData.setOrigin(0, -1, 0);
+
 blueCube.ctfun.addRGBPoint(1, 0, 0, 1);
 blueCube.imageData.setOrigin(5, 0, 0);
 
 greenCube.ctfun.addRGBPoint(1, 0, 1, 0);
-greenCube.imageData.setOrigin(0, -5, 0);
+greenCube.imageData.setOrigin(0, 5, 0);
 
 redCube2.imageData.setOrigin(10, 15, 5);
 objects.push(redCube, blueCube, greenCube);
 
 renderer.addVolume(redCube.actor);
 renderer.addVolume(blueCube.actor);
-renderer.addVolume(greenCube.actor);
-renderer.addVolume(redCube2.actor);
+// renderer.addVolume(greenCube.actor);
+// renderer.addVolume(redCube2.actor);
 
 renderer.setUseMultiVolumeRendering(true);
 
@@ -99,7 +101,7 @@ vec3.set(dop, 0.5, 0.5, 0.5);
 vec3.normalize(dop, dop);
 
 renderer.getActiveCamera().setDirectionOfProjection(dop[0], dop[1], dop[2]);
-renderer.getActiveCamera().setParallelProjection(true);
+renderer.getActiveCamera().setParallelProjection(false);
 renderer.resetCamera();
 
 renderWindow.render();

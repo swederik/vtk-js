@@ -751,55 +751,88 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   }
 
   function getApplyBlend(numVolumes) {
-    let compositeVolumes = `
-      vec3 pos;
-      vec3 tpos; 
-      vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
+    let compositeVolumesSingleStep = `
+      posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
     `;
 
     for (let i = 0; i < numVolumes; i++) {
-      compositeVolumes += `
+      compositeVolumesSingleStep += `
         pos = (viewToIndex_${i} * posVCv4).xyz;
         tpos = pos / vec3(volumeDimensions_${i});
         
-        if (isInsideTexture_${i}(tpos) == true) {
+        if (isInsideTexture(tpos) == true) {
           tValue = getTextureValue_${i}(tpos);
           tColor = getColorForValue_${i}(tValue, tpos);
+          
+          // Additively mix colors across volumes
+          mix = (1.0 - color.a);
+          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
         }
-        
-        color = color + tColor;
       `;
     }
 
-    let compositeAndMixVolumes = `
-      vec3 pos;
-      vec3 tpos; 
-      vec4 posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
-      float mix; 
+    let compositeAndMixVolumesAtRayStep = `
+      posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
+      acrossVolColor = vec4(0.0, 0.0, 0.0, 0.0);
     `;
 
     for (let i = 0; i < numVolumes; i++) {
-      compositeAndMixVolumes += `
+      compositeAndMixVolumesAtRayStep += `
         pos = (viewToIndex_${i} * posVCv4).xyz;
         tpos = pos / vec3(volumeDimensions_${i});
-        mix = (1.0 - color.a);
         
-        if (isInsideTexture_${i}(tpos) == true) {
+        if (isInsideTexture(tpos) == true) {
           tValue = getTextureValue_${i}(pos);
           tColor = getColorForValue_${i}(tValue, pos);
     
-          color = color + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          // Additively mix colors across volumes
+          mix = (1.0 - acrossVolColor.a);
+          acrossVolColor = acrossVolColor + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          
+          numMixingSteps += 1.0;
         }
-        
-        color = color + tColor;
       `;
     }
 
-    const i = 0;
+    compositeAndMixVolumesAtRayStep += `        
+        // Mix across ray steps as usual
+        mix = (1.0 - color.a);
+        color = color + vec4(acrossVolColor.rgb*acrossVolColor.a, acrossVolColor.a)*mix;
+    `;
+
+    let compositeVolumesLastStep = `
+      acrossVolColor = vec4(0.0, 0.0, 0.0, 0.0);
+    `;
+
+    for (let i = 0; i < numVolumes; i++) {
+      compositeVolumesLastStep += `
+        pos = (viewToIndex_${i} * posVCv4).xyz;
+        tpos = pos / vec3(volumeDimensions_${i});
+        
+        if (isInsideTexture(tpos) == true) {
+          tValue = getTextureValue_${i}(tpos);
+          tColor = getColorForValue_${i}(tValue, tpos);
+          
+          // Additively mix colors across volumes
+          mix = (1.0 - color.a);
+          acrossVolColor = acrossVolColor + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          
+          numMixingSteps++;
+        }
+      `;
+    }
+
+    compositeVolumesLastStep += `
+        numMixingSteps = min(1.0, numMixingSteps);
+        acrossVolColor.a = 1.0 - pow(1.0 - acrossVolColor.a, raySteps - stepsTraveled);
+
+        float mix = (1.0 - color.a);
+        color = color + vec4(acrossVolColor.rgb*acrossVolColor.a, acrossVolColor.a)*mix;
+    `;
+
     // Apply the specified blend mode operation along the ray's path.
     return `
-      void applyBlend(vec2 rayStartEndDistancesVC, vec3 rayDirVC)
-      {        
+      void applyBlend(vec2 rayStartEndDistancesVC, vec3 rayDirVC) {
         vec3 posVC = vertexVCVSOutput + rayStartEndDistancesVC.x * rayDirVC;
         vec3 endVC = vertexVCVSOutput + rayStartEndDistancesVC.y * rayDirVC;
         
@@ -817,15 +850,22 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         float stepsTraveled = jitter;
   
         // local vars for the loop
-        vec4 color = vec4(0.0, 0.0, 0.0, 0.0);
-        vec4 tValue = vec4(0.0, 0.0, 0.0, 0.0);
-        vec4 tColor = vec4(0.0, 0.0, 0.0, 0.0);
-        
-        ${compositeVolumes}
+        vec4 color;
+        vec4 tValue;
+        vec4 tColor;
+        vec4 acrossVolColor;
+        float mix;
+        vec3 pos;
+        vec3 tpos;
+        vec4 posVCv4;
+        float numMixingSteps = 0.0;
+
+        ${compositeVolumesSingleStep}
                 
         // handle very thin volumes
         if (raySteps <= 1.0) {
-          color.a = 1.0 - pow(1.0 - color.a, raySteps);
+          numMixingSteps = min(1.0, numMixingSteps);
+          color.a = 1.0 - pow(1.0 - color.a, numMixingSteps);
           gl_FragData[0] = color;
           return;
         }
@@ -837,7 +877,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         for (int i = 0; i < //VTK::MaximumSamplesValue ; ++i) {
           if (stepsTraveled + 1.0 >= raySteps) { break; }
           
-          ${compositeAndMixVolumes}
+          ${compositeAndMixVolumesAtRayStep}
           
           stepsTraveled++;
           posVC += step;
@@ -847,22 +887,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         if (color.a < 0.99 && (raySteps - stepsTraveled) > 0.0) {
           posVC = endVC;
         
-          ${compositeAndMixVolumes}
+          ${compositeVolumesLastStep}
         }
     
         gl_FragData[0] = vec4(color.rgb/color.a, color.a);
       }`;
-  }
-
-  function getIsInsideTexture(i) {
-    return `
-      bool isInsideTexture_${i}(vec3 pos) {
-          return !(pos.x < 0.0 || pos.y < 0.0 || pos.z < 0.0 ||
-              pos.x > 1.0 ||
-              pos.y > 1.0 ||
-              pos.z > 1.0);
-        }
-    `;
   }
 
   publicAPI.createFragmentShader = (shaders, ren, actors) => {
@@ -896,7 +925,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     let applyLighting = '';
     let getColorForValue = '';
     let computeIndexSpaceValues = '';
-    let isInsideTexture = '';
 
     for (let i = 0; i < numVolumes; i++) {
       const numComp = 1; // model.perVol[i].numComp
@@ -909,10 +937,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       applyLighting += getApplyLighting(i);
       getColorForValue += getGetColorForValue(i, numComp);
       computeIndexSpaceValues += getComputeIndexSpaceValues(i);
-      isInsideTexture += getIsInsideTexture(i);
     }
 
     const applyBlend = getApplyBlend(numVolumes);
+
+    console.log(applyBlend);
 
     const bounding = getBoundingBoxAroundVolumes(actors);
 
@@ -940,6 +969,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
       // Lighting values
       //VTK::Light::Dec
+      
+      bool isInsideTexture(vec3 pos) {
+        return (pos.x >= 0.0 && 
+                pos.y >= 0.0 &&
+                pos.z >= 0.0 &&
+                pos.x <= 1.0 &&
+                pos.y <= 1.0 &&
+                pos.z <= 1.0);
+      }
 
       ${getTextureValue}
       ${computeNormal}
@@ -947,7 +985,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ${computeGradientOpacityFactor}
       ${applyLighting}
       ${getColorForValue}
-      ${isInsideTexture}
       ${applyBlend}
       
       float getPlaneConstantFromNormalAndCoplanarPoint(vec3 normal, vec3 point) {
@@ -959,8 +996,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         return dot(planeNormal, point) + planeConstant;
       } 
       
-      vec2 computeRayDistances(vec3 rayDir, vec3 closestPoint, vec3 furthestPoint)
-      {
+      vec2 computeRayDistances(vec3 rayDir, vec3 closestPoint, vec3 furthestPoint) {
         vec2 dists = vec2(100.0*camFar, -1.0);
         
         // Define a plane using the ray direction and one of the points
