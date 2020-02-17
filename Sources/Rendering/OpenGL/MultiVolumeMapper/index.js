@@ -657,82 +657,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }`;
   }
 
-  function getClosestAndFurthestPointsFromCamera(camera, actors) {
-    const dop = camera.getDirectionOfProjection();
-    const position = camera.getPosition();
-    const distances = [];
-
-    actors.forEach((actor) => {
-      const cornerVertices = actor
-        .getMapper()
-        .getInputData()
-        .getCorners();
-
-      cornerVertices.forEach((vertex) => {
-        // Define a plane using each corner of the
-        // actor bounding box and with the normal as the
-        // camera direction of projection
-        const point = vec3.create();
-        vec3.set(point, vertex[0], vertex[1], vertex[2]);
-
-        const normal = vec3.fromValues(dop[0], dop[1], dop[2]);
-        const normalizedDop = vec3.create();
-        vec3.normalize(normalizedDop, normal);
-
-        const constant = -vec3.dot(point, normal);
-        const plane = {
-          normal: normalizedDop,
-          constant,
-        };
-
-        // Find the distance between camera position and
-        // the plane
-        const distance = vec3.dot(plane.normal, position) + plane.constant;
-
-        // Add the distances to a list so we can sort it later
-        distances.push({
-          distance,
-          vertex,
-        });
-      });
-    });
-
-    // Sort the distances from camera position, along camera direction of projection,
-    // to each corner of each volume so we can find the minimum and maximum distances
-    // and use this to bound the ray start and end positions
-    distances.sort((a, b) => b.distance - a.distance);
-
-    const min = distances[0].vertex;
-    const max = distances[distances.length - 1].vertex;
-
-    return [min, max];
-  }
-
-  function getBoundingBoxAroundVolumes(actors) {
-    let xMax = 0;
-    let xMin = Infinity;
-    let yMax = 0;
-    let yMin = Infinity;
-    let zMax = 0;
-    let zMin = Infinity;
-
-    actors.forEach((actor) => {
-      const bounds = actor
-        .getMapper()
-        .getInputData()
-        .getBounds();
-
-      xMin = Math.min(xMin, bounds[0]);
-      xMax = Math.max(xMax, bounds[1]);
-      yMin = Math.min(yMin, bounds[2]);
-      yMax = Math.max(yMax, bounds[3]);
-      zMin = Math.min(zMin, bounds[4]);
-      zMax = Math.max(zMax, bounds[5]);
-    });
-
-    return [xMin, xMax, yMin, yMax, zMin, zMax];
-  }
-
   function getSmallestVoxelSizeForVolumes(actors) {
     let minSize = Infinity;
 
@@ -815,10 +739,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           
           // Additively mix colors across volumes
           mix = (1.0 - color.a);
-          acrossVolColor = acrossVolColor + vec4(tColor.rgb*tColor.a, tColor.a)*mix;
+          acrossVolColor = acrossVolColor + vec4(tColor.rgb*tColor.a, tColor.a)* mix;
           
           numMixingSteps++;
-        }
+        }/* else {
+          // FIXME: This makes outside-all-volumes stuff green for debugging
+          acrossVolColor = vec4(0.0, 1.0, 0.0, 1.0);
+        }*/
       `;
     }
 
@@ -894,6 +821,78 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       }`;
   }
 
+  function getGetRayPointIntersectionBounds(i) {
+    return `
+    //=======================================================================
+    // Compute a new start and end point for a given ray based
+    // on the provided bounded clipping plane (aka a rectangle)
+    void getRayPointIntersectionBounds_${i}(
+      vec3 rayPos, vec3 rayDir,
+      vec3 planeDir, float planeDist,
+      inout vec2 tbounds, vec3 vPlaneX, vec3 vPlaneY,
+      float vSize1, float vSize2)
+    {
+      float result = dot(rayDir, planeDir);
+      if (result == 0.0)
+      {
+        return;
+      }
+      result = -1.0 * (dot(rayPos, planeDir) + planeDist) / result;
+      vec3 xposVC = rayPos + rayDir*result;
+      vec3 vxpos = xposVC - vOriginVC_${i};
+      vec2 vpos = vec2(
+      dot(vxpos, vPlaneX),
+      dot(vxpos, vPlaneY));
+
+      // on some apple nvidia systems this does not work
+      // if (vpos.x < 0.0 || vpos.x > vSize1 ||
+      //     vpos.y < 0.0 || vpos.y > vSize2)
+      // even just
+      // if (vpos.x < 0.0 || vpos.y < 0.0)
+      // fails
+      // so instead we compute a value that represents in and out
+      //and then compute the return using this value
+      float xcheck = max(0.0, vpos.x * (vpos.x - vSize1)); //  0 means in bounds
+      float check = sign(max(xcheck, vpos.y * (vpos.y - vSize2))); //  0 means in bounds, 1 = out
+
+      tbounds = mix(
+        vec2(min(tbounds.x, result), max(tbounds.y, result)), // in value
+        tbounds, // out value
+        check);  // 0 in 1 out
+    }
+    `;
+  }
+
+  function getDistsPerVolume(i) {
+    return `
+      vec3 tdims_${i} = vec3(volumeDimensions_${i});
+      vec3 vSize_${i} = vSpacing_${i}*(tdims_${i} - 1.0);
+      vec2 dists_${i} = vec2(100.0*camFar, -1.0);
+      
+      getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
+        vPlaneNormal0_${i}, vPlaneDistance0_${i}, dists_${i}, vPlaneNormal2_${i}, vPlaneNormal4_${i},
+        vSize_${i}.y, vSize_${i}.z);
+      getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
+        vPlaneNormal1_${i}, vPlaneDistance1_${i}, dists_${i}, vPlaneNormal2_${i}, vPlaneNormal4_${i},
+        vSize_${i}.y, vSize_${i}.z);
+      getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
+        vPlaneNormal2_${i}, vPlaneDistance2_${i}, dists_${i}, vPlaneNormal0_${i}, vPlaneNormal4_${i},
+        vSize_${i}.x, vSize_${i}.z);
+      getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
+        vPlaneNormal3_${i}, vPlaneDistance3_${i}, dists_${i}, vPlaneNormal0_${i}, vPlaneNormal4_${i},
+        vSize_${i}.x, vSize_${i}.z);
+      getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
+        vPlaneNormal4_${i}, vPlaneDistance4_${i}, dists_${i}, vPlaneNormal0_${i}, vPlaneNormal2_${i},
+        vSize_${i}.x, vSize_${i}.y);
+      getRayPointIntersectionBounds_${i}(vertexVCVSOutput, rayDir,
+        vPlaneNormal5_${i}, vPlaneDistance5_${i}, dists_${i}, vPlaneNormal0_${i}, vPlaneNormal2_${i},
+        vSize_${i}.x, vSize_${i}.y);
+        
+        dists.x = min(dists.x, dists_${i}.x);
+        dists.y = max(dists.y, dists_${i}.y);
+    `;
+  }
+
   publicAPI.createFragmentShader = (shaders, ren, actors) => {
     const numVolumes = actors.length;
     const maxNumComponents = 1;
@@ -912,8 +911,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       uniform float sampleDistance;
       
       uniform mat4 worldToViewMatrix;
-      uniform vec3 closestPoint;
-      uniform vec3 furthestPoint;
       uniform float smallestVoxelSize;
       `;
 
@@ -925,6 +922,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     let applyLighting = '';
     let getColorForValue = '';
     let computeIndexSpaceValues = '';
+    let getDists = '';
+    let getRayPointIntersectionBounds = '';
 
     for (let i = 0; i < numVolumes; i++) {
       const numComp = 1; // model.perVol[i].numComp
@@ -937,13 +936,11 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       applyLighting += getApplyLighting(i);
       getColorForValue += getGetColorForValue(i, numComp);
       computeIndexSpaceValues += getComputeIndexSpaceValues(i);
+      getDists += getDistsPerVolume(i);
+      getRayPointIntersectionBounds += getGetRayPointIntersectionBounds(i);
     }
 
     const applyBlend = getApplyBlend(numVolumes);
-
-    console.log(applyBlend);
-
-    const bounding = getBoundingBoxAroundVolumes(actors);
 
     const fragShader = `//VTK::System::Dec
 
@@ -985,38 +982,14 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       ${computeGradientOpacityFactor}
       ${applyLighting}
       ${getColorForValue}
+      ${getRayPointIntersectionBounds}
       ${applyBlend}
       
-      float getPlaneConstantFromNormalAndCoplanarPoint(vec3 normal, vec3 point) {
-        return -dot(point, normal);
-      }
-      
-      float getPointToPlaneDistance(vec3 planeNormal, float planeConstant, vec3 point) {
-        // Define a plane using the point and the normal
-        return dot(planeNormal, point) + planeConstant;
-      } 
-      
-      vec2 computeRayDistances(vec3 rayDir, vec3 closestPoint, vec3 furthestPoint) {
+      vec2 computeRayDistances(vec3 rayDir) {
         vec2 dists = vec2(100.0*camFar, -1.0);
         
-        // Define a plane using the ray direction and one of the points
-        vec3 cameraPositionVC = vec3(0.0, 0.0, 0.0);
-        
-        vec4 closestPointV4 = vec4(closestPoint.x, closestPoint.y, closestPoint.z, 1.0); 
-        vec3 closestPointVC = (worldToViewMatrix * closestPointV4).xyz;
-        
-        vec4 furthestPointV4 = vec4(furthestPoint.x, furthestPoint.y, furthestPoint.z, 1.0); 
-        vec3 furthestPointVC = (worldToViewMatrix * furthestPointV4).xyz;
-        
-        float closestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, closestPointVC);
-        float furthestConstant = getPlaneConstantFromNormalAndCoplanarPoint(rayDir, furthestPointVC);
-        
-        // X is close, Y is far
-        dists.x = getPointToPlaneDistance(rayDir, closestConstant, cameraPositionVC);
-        dists.y = getPointToPlaneDistance(rayDir, furthestConstant, cameraPositionVC);
-        
-        // Temporarily added to try to fix rays
-        dists = vec2(-1.0, 100.0*camFar);
+        // all this is in View Coordinates
+        ${getDists}
         
         // do not go behind front clipping plane
         dists.x = max(0.0, dists.x);
@@ -1044,12 +1017,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         }
 
         // compute the start and end points for the ray
-        vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC, closestPoint, furthestPoint);
+        vec2 rayStartEndDistancesVC = computeRayDistances(rayDirVC);
 
         // do we need to composite? aka does the ray have any length
         // If not, bail out early
         if (rayStartEndDistancesVC.y <= rayStartEndDistancesVC.x) {
-          discard;
+          // discard;
+          gl_FragData[0] = vec4(1.0, 0.0, 0.0, 1.0);
         }
 
         // Perform the blending operation along the ray
@@ -1066,11 +1040,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.replaceShaderValues = (shaders, ren, actors) => {
-    const actor = actors[0];
     let FSSource = shaders.Fragment;
 
-    const iComps = actor.getProperty().getIndependentComponents();
-    if (iComps) {
+    const anyActorHasIComps = actors.some((actor) =>
+      actor.getProperty().getIndependentComponents()
+    );
+
+    if (anyActorHasIComps) {
       FSSource = vtkShaderProgram.substitute(
         FSSource,
         '//VTK::IndependentComponentsOn',
@@ -1084,18 +1060,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     // We do a break so most systems will gracefully
     // early terminate, but it is always possible
     // a system will execute every step regardless
-    const ext = model.currentInput.getExtent();
-    const spc = model.currentInput.getSpacing();
+    const bounds = publicAPI.getBounds(actors);
     const vsize = vec3.create();
+
     vec3.set(
       vsize,
-      (ext[1] - ext[0]) * spc[0],
-      (ext[3] - ext[2]) * spc[1],
-      (ext[5] - ext[4]) * spc[2]
+      bounds[1] - bounds[0] + 1,
+      bounds[3] - bounds[2] + 1,
+      bounds[5] - bounds[4] + 1
     );
 
     const sampleDist = 1;
-    const maxSamples = vec3.length(vsize) / 1;
+    const maxSamples = vec3.length(vsize) / sampleDist;
 
     FSSource = vtkShaderProgram.substitute(
       FSSource,
@@ -1111,19 +1087,25 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     ).result;
 
     // if using gradient opacity define that
-    /* model.gopacity = actor.getProperty().getUseGradientOpacity(0);
-    for (let nc = 1; iComps && !model.gopacity && nc < numComp; ++nc) {
-      if (actor.getProperty().getUseGradientOpacity(nc)) {
-        model.gopacity = true;
+    let anyModelHasGradientOpacity = false;
+    actors.forEach((actor, volIdx) => {
+      // TODO: Check each component, not just component idx 0
+      model.perVol[volIdx].gopacity = actor
+        .getProperty()
+        .getUseGradientOpacity(0);
+
+      if (model.perVol[volIdx].gopacity) {
+        anyModelHasGradientOpacity = true;
       }
-    }
-    if (model.gopacity) {
+    });
+
+    if (anyModelHasGradientOpacity) {
       FSSource = vtkShaderProgram.substitute(
         FSSource,
         '//VTK::GradientOpacityOn',
         '#define vtkGradientOpacityOn'
       ).result;
-    } */
+    }
 
     // if we have a ztexture then declare it and use it
     if (model.zBufferTexture !== null) {
@@ -1189,11 +1171,14 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.getNeedToRebuildShaders = (cellBO, ren, actors) => {
-    const actor = actors[0];
+    const anyActorHasShadingEnabled = actors.some((actor) =>
+      actor.getProperty().getShade()
+    );
 
     // do we need lighting?
     let lightComplexity = 0;
-    if (actor.getProperty().getShade()) {
+
+    if (anyActorHasShadingEnabled) {
       // consider the lighting complexity to determine which case applies
       // simple headlight, Light Kit, the whole feature set of VTK
       lightComplexity = 0;
@@ -1215,8 +1200,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
             !light.lightTypeIsHeadLight())
         ) {
           lightComplexity = 2;
-        }
-        if (lightComplexity < 3 && light.getPositional()) {
+        } else if (lightComplexity < 3 && light.getPositional()) {
           lightComplexity = 3;
         }
       });
@@ -1228,16 +1212,24 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       needRebuild = true;
     }
 
+    const shaderSourceMTime = cellBO.getShaderSourceTime().getMTime();
+
+    const anyActorHasChanged = actors.some((actor) => {
+      const imageData = actor.getMapper().getInputData();
+      return (
+        shaderSourceMTime < actor.getMTime() ||
+        shaderSourceMTime < imageData.getMTime()
+      );
+    });
+
     // has something changed that would require us to recreate the shader?
     if (
+      anyActorHasChanged ||
       cellBO.getProgram() === 0 ||
       needRebuild ||
-      model.lastHaveSeenDepthRequest !== model.haveSeenDepthRequest ||
       !!model.lastZBufferTexture !== !!model.zBufferTexture ||
-      cellBO.getShaderSourceTime().getMTime() < publicAPI.getMTime() ||
-      cellBO.getShaderSourceTime().getMTime() < actor.getMTime() ||
-      cellBO.getShaderSourceTime().getMTime() < model.renderable.getMTime() ||
-      cellBO.getShaderSourceTime().getMTime() < model.currentInput.getMTime()
+      shaderSourceMTime < publicAPI.getMTime() ||
+      shaderSourceMTime < model.renderable.getMTime()
     ) {
       model.lastZBufferTexture = model.zBufferTexture;
       return true;
@@ -1247,7 +1239,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.updateShaders = (cellBO, ren, actors) => {
-    const actor = actors[0];
     model.lastBoundBO = cellBO;
 
     // has something changed that would require us to recreate the shader?
@@ -1373,6 +1364,15 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     model.keyMatrixTime.modified();
   };
 
+  function getPlaneConstantFromNormalAndCoplanarPoint(normal, point) {
+    return -vec3.dot(point, normal);
+  }
+
+  function getPointToPlaneDistance(planeNormal, planeConstant, point) {
+    // Define a plane using the point and the normal
+    return vec3.dot(planeNormal, point) + planeConstant;
+  }
+
   publicAPI.setCameraShaderParameters = (cellBO, ren, actors) => {
     // // [WMVD]C == {world, model, view, display} coordinates
     // // E.g., WCDC == world to display coordinate transformation
@@ -1407,43 +1407,27 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     vec4.subtract(delta, lenPos2, lenPos1);
 
     const deltaLen = vec4.length(delta);
-
     const camera = model.openGLCamera.getRenderable();
-    const points = getClosestAndFurthestPointsFromCamera(camera, actors);
+    const dir = vec3.create();
+    const pos = vec3.create();
+    const bounds = publicAPI.getBounds(actors);
 
-    program.setUniform3f(
-      'closestPoint',
-      points[0][0],
-      points[0][1],
-      points[0][2]
-    );
-    program.setUniform3f(
-      'furthestPoint',
-      points[1][0],
-      points[1][1],
-      points[1][2]
-    );
-
-    const bounds = model.currentInput.getBounds();
-    const dims = model.currentInput.getDimensions();
+    let dcxmin = 1.0;
+    let dcxmax = -1.0;
+    let dcymin = 1.0;
+    let dcymax = -1.0;
 
     // compute the viewport bounds of the volume
     // we will only render those fragments.
-    const pos = vec3.create();
-    const dir = vec3.create();
-    const dcxmin = 1.0;
-    const dcxmax = -1.0;
-    const dcymin = 1.0;
-    const dcymax = -1.0;
-
-    /* for (let i = 0; i < 8; ++i) {
+    for (let i = 0; i < 8; ++i) {
       vec3.set(
         pos,
         bounds[i % 2],
         bounds[2 + (Math.floor(i / 2) % 2)],
         bounds[4 + Math.floor(i / 4)]
       );
-      vec3.transformMat4(pos, pos, model.modelToView);
+      vec3.transformMat4(pos, pos, keyMats.wcvc);
+
       if (!cam.getParallelProjection()) {
         vec3.normalize(dir, pos);
 
@@ -1455,6 +1439,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         const t = -crange[0] / pos[2];
         vec3.scale(pos, dir, t);
       }
+
       // now convert to DC
       vec3.transformMat4(pos, pos, keyMats.vcdc);
 
@@ -1462,7 +1447,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       dcxmax = Math.max(pos[0], dcxmax);
       dcymin = Math.min(pos[1], dcymin);
       dcymax = Math.max(pos[1], dcymax);
-    } */
+    }
 
     program.setUniformf('dcxmin', dcxmin);
     program.setUniformf('dcxmax', dcxmax);
@@ -1477,6 +1462,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 
     actors.forEach((actor, volIdx) => {
       const imageData = actor.getMapper().getInputData();
+      const dims = imageData.getDimensions();
       const ext = imageData.getExtent();
       const spc = imageData.getSpacing();
       const idxToView = mat4.create();
@@ -1512,8 +1498,9 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       );
       mat3.multiply(idxNormalMatrix, idxNormalMatrix, imageData.getDirection());
 
-      const sampleDist = 1; // model.renderable.getSampleDistance();
-      const maxSamples = vec3.length(vsize) / 1;
+      // TODO: Hardcoded for now
+      const sampleDist = 0.8; // model.renderable.getSampleDistance();
+      const maxSamples = vec3.length(vsize) / sampleDist;
       if (maxSamples > 1000) {
         vtkWarningMacro(`The number of steps required ${Math.ceil(
           maxSamples
@@ -1941,7 +1928,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     model.jitterTexture.deactivate();
   };
 
-  /* getProgramInfo(gl, program) {
+  /* function getProgramInfo(gl, program) {
     const result = {
       attributes: [],
       uniforms: [],
@@ -2025,7 +2012,6 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   } */
 
   publicAPI.renderPieceFinish = (ren, actors) => {
-    const actor = actors[0];
     // if we have a zbuffer texture then deactivate it
     if (model.zBufferTexture !== null) {
       model.zBufferTexture.deactivate();
@@ -2129,11 +2115,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       return;
     }
 
-    const actor = actors[0];
     publicAPI.invokeEvent({ type: 'StartEvent' });
 
-    // TODO: Remove this everywhere it is currently used
-    model.currentInput = actor.getMapper().getInputData();
     publicAPI.invokeEvent({ type: 'EndEvent' });
 
     if (!actors || !actors.length) {
@@ -2146,14 +2129,38 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     publicAPI.renderPieceFinish(ren, actors);
   };
 
-  publicAPI.computeBounds = (ren, actors) => {
-    const actor = actors[0];
+  publicAPI.computeBounds = (actors) => {
+    let xMax = 0;
+    let xMin = Infinity;
+    let yMax = 0;
+    let yMin = Infinity;
+    let zMax = 0;
+    let zMin = Infinity;
 
-    if (!publicAPI.getInput()) {
-      vtkMath.uninitializeBounds(model.Bounds);
-      return;
+    actors.forEach((actor) => {
+      const bounds = actor
+        .getMapper()
+        .getInputData()
+        .getBounds();
+
+      xMin = Math.min(xMin, bounds[0]);
+      xMax = Math.max(xMax, bounds[1]);
+      yMin = Math.min(yMin, bounds[2]);
+      yMax = Math.max(yMax, bounds[3]);
+      zMin = Math.min(zMin, bounds[4]);
+      zMax = Math.max(zMax, bounds[5]);
+    });
+
+    model.bounds = [xMin, xMax, yMin, yMax, zMin, zMax];
+  };
+
+  publicAPI.getBounds = (actors) => {
+    if (!model.bounds) {
+      // TODO: Recompute bounds when volumes array has changed
+      publicAPI.computeBounds(actors);
     }
-    model.bounds = publicAPI.getInput().getBounds();
+
+    return model.bounds;
   };
 
   publicAPI.updateBufferObjects = (ren, actors) => {
@@ -2164,19 +2171,21 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   };
 
   publicAPI.getNeedToRebuildBufferObjects = (ren, actors) => {
-    const actor = actors[0];
+    const bufferMTime = model.VBOBuildTime.getMTime();
+    const anyActorHasChanged = actors.some((actor) => {
+      const imageData = actor.getMapper().getInputData();
+      return (
+        bufferMTime < actor.getMTime() ||
+        bufferMTime < actor.getProperty().getMTime() ||
+        bufferMTime < imageData.getMTime()
+      );
+    });
 
-    // first do a coarse check
-    if (
-      model.VBOBuildTime.getMTime() < publicAPI.getMTime() ||
-      model.VBOBuildTime.getMTime() < actor.getMTime() ||
-      model.VBOBuildTime.getMTime() < model.renderable.getMTime() ||
-      model.VBOBuildTime.getMTime() < actor.getProperty().getMTime() ||
-      model.VBOBuildTime.getMTime() < model.currentInput.getMTime()
-    ) {
-      return true;
-    }
-    return false;
+    return (
+      anyActorHasChanged ||
+      bufferMTime < publicAPI.getMTime() ||
+      bufferMTime < model.renderable.getMTime()
+    );
   };
 
   function rebuildOpacityTransferFunctionTexture(actors) {
@@ -2401,18 +2410,18 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     let toString;
 
     actors.forEach((actor, volIdx) => {
-      const image = actor.getMapper().getInputData();
-      const numComp = image
+      const imageData = actor.getMapper().getInputData();
+      const numComp = imageData
         .getPointData()
         .getScalars()
         .getNumberOfComponents();
+      const dims = imageData.getDimensions();
       const vprop = actor.getProperty();
       const volumeData = model.perVol[volIdx];
 
       const iComps = vprop.getIndependentComponents();
       const numIComps = iComps ? numComp : 1;
-      // TODO[multivolume] Stupid question: If we modify these,
-      //  are they modified in the object as well?
+
       let {
         scalarTextureMTime,
         colorTextureMTime,
@@ -2513,9 +2522,8 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
       const sampleDist = 1; // model.renderable.getSampleDistance();
 
       // rebuild the scalarTexture if the data has changed
-      if (scalarTextureMTime !== image.getMTime()) {
+      if (scalarTextureMTime !== imageData.getMTime()) {
         // Build the textures
-        const dims = image.getDimensions();
         scalarTexture.releaseGraphicsResources(model.openGLRenderWindow);
         scalarTexture.resetFormatAndType();
         scalarTexture.create3DFilterableFromRaw(
@@ -2523,17 +2531,17 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
           dims[1],
           dims[2],
           numComp,
-          image
+          imageData
             .getPointData()
             .getScalars()
             .getDataType(),
-          image
+          imageData
             .getPointData()
             .getScalars()
             .getData()
         );
 
-        scalarTextureMTime = image.getMTime();
+        scalarTextureMTime = imageData.getMTime();
       }
     });
 
@@ -2606,6 +2614,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
 // ----------------------------------------------------------------------------
 
 const DEFAULT_VALUES = {
+  bounds: null,
   context: null,
   VBOBuildTime: null,
   scalarTexture: null,
@@ -2625,8 +2634,6 @@ const DEFAULT_VALUES = {
   lastZBufferTexture: null,
   lastLightComplexity: 0,
   fullViewportTime: 1.0,
-  idxToView: null,
-  idxNormalMatrix: null,
   displayToView: null,
   avgWindowArea: 0.0,
   avgFrameTime: 0.0,

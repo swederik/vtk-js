@@ -9,6 +9,8 @@ import vtkVolumeMapper from 'vtk.js/Sources/Rendering/Core/VolumeMapper';
 import vtkImageData from 'vtk.js/Sources/Common/DataModel/ImageData';
 import vtkDataArray from 'vtk.js/Sources/Common/Core/DataArray';
 
+import controlPanel from './controlPanel.html';
+
 // ----------------------------------------------------------------------------
 // Standard rendering code setup
 // ----------------------------------------------------------------------------
@@ -18,9 +20,10 @@ const fullScreenRenderer = vtkFullScreenRenderWindow.newInstance({
 });
 const renderer = fullScreenRenderer.getRenderer();
 const renderWindow = fullScreenRenderer.getRenderWindow();
+fullScreenRenderer.addController(controlPanel);
 
-function createCube() {
-  const cubeArray = new Uint8Array(10 * 10 * 10);
+function createCube(dims = [11, 11, 11]) {
+  const cubeArray = new Uint8Array(dims[0] * dims[1] * dims[2]);
   for (let i = 0; i < cubeArray.length; i++) {
     cubeArray.set([1], i);
   }
@@ -33,7 +36,7 @@ function createCube() {
 
   const imageData = vtkImageData.newInstance();
   imageData.getPointData().setScalars(pointData);
-  imageData.setDimensions(10, 10, 10);
+  imageData.setDimensions(dims[0], dims[1], dims[2]);
 
   const actor = vtkVolume.newInstance();
   const mapper = vtkVolumeMapper.newInstance();
@@ -72,15 +75,17 @@ function createCube() {
 
 const objects = [];
 
-const redCube = createCube();
-const blueCube = createCube();
+const redCube = createCube([11, 11, 11]);
+const blueCube = createCube([5, 5, 5]);
 const greenCube = createCube();
 const redCube2 = createCube();
 
-redCube.imageData.setOrigin(0, -1, 0);
+redCube.imageData.setOrigin(0, -2, 0);
+redCube.imageData.setSpacing(0.5, 0.5, 0.5);
 
 blueCube.ctfun.addRGBPoint(1, 0, 0, 1);
 blueCube.imageData.setOrigin(5, 0, 0);
+blueCube.imageData.setSpacing(2, 2, 2);
 
 greenCube.ctfun.addRGBPoint(1, 0, 1, 0);
 greenCube.imageData.setOrigin(0, 5, 0);
@@ -88,23 +93,32 @@ greenCube.imageData.setOrigin(0, 5, 0);
 redCube2.imageData.setOrigin(10, 15, 5);
 objects.push(redCube, blueCube, greenCube);
 
-renderer.addVolume(redCube.actor);
 renderer.addVolume(blueCube.actor);
+renderer.addVolume(redCube.actor);
 // renderer.addVolume(greenCube.actor);
 // renderer.addVolume(redCube2.actor);
 
 renderer.setUseMultiVolumeRendering(true);
 
 renderer.resetCamera();
-const dop = vec3.create();
+let dop = vec3.create();
 vec3.set(dop, 0.5, 0.5, 0.5);
 vec3.normalize(dop, dop);
 
+dop = [0.5355747983011757, -0.7672349325676825, -0.3528600199406539];
+
 renderer.getActiveCamera().setDirectionOfProjection(dop[0], dop[1], dop[2]);
-renderer.getActiveCamera().setParallelProjection(false);
+renderer.getActiveCamera().setParallelProjection(true);
 renderer.resetCamera();
 
 renderWindow.render();
+
+document
+  .getElementById('useMultiVolumeRendering')
+  .addEventListener('input', (e) => {
+    renderer.setUseMultiVolumeRendering(!!e.target.checked);
+    renderWindow.render();
+  });
 
 // -----------------------------------------------------------
 // Make some variables global so that you can inspect and
