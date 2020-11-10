@@ -46,7 +46,7 @@ function createCube(dims = [11, 11, 11]) {
   // create color and opacity transfer functions
   const ofun = vtkPiecewiseFunction.newInstance();
   ofun.addPoint(0, 0);
-  ofun.addPoint(1, 0.3);
+  ofun.addPoint(1, 0.2);
 
   const ctfun = vtkColorTransferFunction.newInstance();
   ctfun.addRGBPoint(0, 0, 0, 0);
@@ -75,17 +75,17 @@ function createCube(dims = [11, 11, 11]) {
 
 const objects = [];
 
-const redCube = createCube([11, 11, 11]);
-const blueCube = createCube([5, 5, 5]);
+const redCube = createCube([30, 30, 30]);
+const blueCube = createCube([50, 50, 50]);
 const greenCube = createCube();
 const redCube2 = createCube();
 
-redCube.imageData.setOrigin(0, -2, 0);
-redCube.imageData.setSpacing(0.5, 0.5, 0.5);
+redCube.imageData.setOrigin(30, 100, 0);
+redCube.imageData.setSpacing(5, 5, 5);
 
 blueCube.ctfun.addRGBPoint(1, 0, 0, 1);
-blueCube.imageData.setOrigin(5, 0, 0);
-blueCube.imageData.setSpacing(2, 2, 2);
+blueCube.imageData.setOrigin(2, 0, 0);
+blueCube.imageData.setSpacing(3, 3, 3);
 
 greenCube.ctfun.addRGBPoint(1, 0, 1, 0);
 greenCube.imageData.setOrigin(0, 5, 0);
@@ -93,8 +93,8 @@ greenCube.imageData.setOrigin(0, 5, 0);
 redCube2.imageData.setOrigin(10, 15, 5);
 objects.push(redCube, blueCube, greenCube);
 
-renderer.addVolume(blueCube.actor);
 renderer.addVolume(redCube.actor);
+renderer.addVolume(blueCube.actor);
 // renderer.addVolume(greenCube.actor);
 // renderer.addVolume(redCube2.actor);
 

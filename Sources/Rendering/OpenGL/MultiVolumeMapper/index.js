@@ -675,12 +675,12 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
   }
 
   function getApplyBlend(numVolumes) {
-    let compositeVolumesSingleStep = `
-      posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
-    `;
+    let compositeVolumesSingleStep = ``;
 
     for (let i = 0; i < numVolumes; i++) {
       compositeVolumesSingleStep += `
+        posVCrelative = posVC;
+        posVCv4 = vec4(posVCrelative.x, posVCrelative.y, posVCrelative.z, 1.0);
         pos = (viewToIndex_${i} * posVCv4).xyz;
         tpos = pos / vec3(volumeDimensions_${i});
         
@@ -696,12 +696,13 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
     }
 
     let compositeAndMixVolumesAtRayStep = `
-      posVCv4 = vec4(posVC.x, posVC.y, posVC.z, 1.0);
       acrossVolColor = vec4(0.0, 0.0, 0.0, 0.0);
     `;
 
     for (let i = 0; i < numVolumes; i++) {
       compositeAndMixVolumesAtRayStep += `
+        posVCrelative = posVC;
+        posVCv4 = vec4(posVCrelative.x, posVCrelative.y, posVCrelative.z, 1.0);
         pos = (viewToIndex_${i} * posVCv4).xyz;
         tpos = pos / vec3(volumeDimensions_${i});
         
@@ -785,6 +786,7 @@ function vtkOpenGLMultiVolumeMapper(publicAPI, model) {
         vec3 pos;
         vec3 tpos;
         vec4 posVCv4;
+        vec3 posVCrelative;
         float numMixingSteps = 0.0;
 
         ${compositeVolumesSingleStep}
