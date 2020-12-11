@@ -1,0 +1,6 @@
+/*!
+ * @project        vtk.js
+ * @build          Fri, Dec 11, 2020 9:39 AM ET
+ * @copyright      Copyright (c) 2020 Kitware, Inc.
+ *
+ */
