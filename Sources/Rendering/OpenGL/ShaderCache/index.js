@@ -1,5 +1,3 @@
-import md5 from 'blueimp-md5';
-
 import macro from 'vtk.js/Sources/macro';
 import vtkShaderProgram from 'vtk.js/Sources/Rendering/OpenGL/ShaderProgram';
 
@@ -151,9 +149,7 @@ function vtkShaderCache(publicAPI, model) {
   };
 
   publicAPI.getShaderProgram = (vertexCode, fragmentCode, geometryCode) => {
-    // compute the MD5 and the check the map
-    const hashInput = `${vertexCode}${fragmentCode}${geometryCode}`;
-    const result = md5(hashInput);
+    const result = `${vertexCode}${fragmentCode}${geometryCode}`;
 
     // does it already exist?
     const loc = Object.keys(model.shaderPrograms).indexOf(result);
